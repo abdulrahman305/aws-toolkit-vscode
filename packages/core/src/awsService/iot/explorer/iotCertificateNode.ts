@@ -20,9 +20,10 @@ import { IotCertsFolderNode } from './iotCertFolderNode'
 import { IotThingNode } from './iotThingNode'
 import { IotPolicyCertNode } from './iotPolicyNode'
 import { getIcon } from '../../../shared/icons'
-import { formatLocalized, truncate } from '../../../shared/utilities/textUtilities'
+import { truncate } from '../../../shared/utilities/textUtilities'
 import { Settings } from '../../../shared/settings'
 import { ClassToInterfaceType } from '../../../shared/utilities/tsUtils'
+import { formatLocalized } from '../../../shared/datetime'
 
 const contextBase = 'awsIotCertificateNode'
 /**
@@ -50,7 +51,7 @@ export abstract class IotCertificateNode extends AWSTreeNodeBase implements AWSR
             this.certificate.id,
             this.certificate.activeStatus,
             formatLocalized(this.certificate.creationDate),
-            things?.length ?? 0 > 0 ? `\nAttached to: ${things!.join(', ')}` : ''
+            (things?.length ?? 0 > 0) ? `\nAttached to: ${things!.join(', ')}` : ''
         )
         this.iconPath = getIcon('aws-iot-certificate')
         this.description = `\t[${this.certificate.activeStatus}]`

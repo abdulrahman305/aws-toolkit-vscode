@@ -52,6 +52,14 @@ import { ExtStartUpSources } from '../shared/telemetry'
 import { CommonAuthWebview } from '../login/webview/vue/backend'
 import { AuthSource } from '../login/webview/util'
 import { setContext } from '../shared/vscode/setContext'
+import { CredentialsProviderManager } from './providers/credentialsProviderManager'
+import { SharedCredentialsProviderFactory } from './providers/sharedCredentialsProviderFactory'
+import { Ec2CredentialsProvider } from './providers/ec2CredentialsProvider'
+import { EcsCredentialsProvider } from './providers/ecsCredentialsProvider'
+import { EnvVarsCredentialsProvider } from './providers/envVarsCredentialsProvider'
+import { showMessageWithUrl } from '../shared/utilities/messages'
+import { credentialHelpUrl } from '../shared/constants'
+import { ExtStartUpSource } from '../shared/telemetry/util'
 
 // iam-only excludes Builder ID and IAM Identity Center from the list of valid connections
 // TODO: Understand if "iam" should include these from the list at all
@@ -101,25 +109,70 @@ export async function promptAndUseConnection(...[auth, type]: Parameters<typeof 
     })
 }
 
-export async function signout(auth: Auth, conn: Connection | undefined = auth.activeConnection) {
-    if (conn?.type === 'sso') {
-        // TODO: does deleting the connection make sense UX-wise?
-        // this makes it disappear from the list of available connections
-        await auth.deleteConnection(conn)
-
-        const iamConnections = (await auth.listConnections()).filter((c) => c.type === 'iam')
-        const fallbackConn = iamConnections.find((c) => c.id === 'profile:default') ?? iamConnections[0]
-        if (fallbackConn !== undefined) {
-            await auth.useConnection(fallbackConn)
-        }
-    } else {
-        await auth.logout()
-
-        const fallbackConn = (await auth.listConnections()).find((c) => c.type === 'sso')
-        if (fallbackConn !== undefined) {
-            await auth.useConnection(fallbackConn)
-        }
+/**
+ * Get a IAM connection, while prompt && connection not valid: prompt for choosing a new connection
+ * @param opts.prompt: controls if prompt is shown when no valid connection is found
+ * @returns active iam connection, or undefined if not found/no prompt
+ */
+export async function getIAMConnection(opts: { prompt: boolean } = { prompt: false }) {
+    const connection = Auth.instance.activeConnection
+    if (connection?.type === 'iam' && connection.state === 'valid') {
+        return connection
     }
+    if (!opts.prompt) {
+        return
+    }
+    let errorMessage = localize(
+        'aws.toolkit.auth.requireIAMmessage',
+        'The current command requires authentication with IAM credentials.'
+    )
+    if (connection?.state === 'valid') {
+        errorMessage =
+            localize(
+                'aws.toolkit.auth.requireIAMInvalidAuth',
+                'Authentication through Builder ID or IAM Identity Center detected. '
+            ) + errorMessage
+    }
+    const acceptMessage = localize('aws.toolkit.auth.accept', 'Authenticate with IAM credentials')
+    const modalResponse = await showMessageWithUrl(
+        errorMessage,
+        credentialHelpUrl,
+        localizedText.viewDocs,
+        'info',
+        [acceptMessage],
+        true
+    )
+    if (modalResponse !== acceptMessage) {
+        return
+    }
+    await promptAndUseConnection(Auth.instance, 'iam-only')
+    return Auth.instance.activeConnection
+}
+
+export async function signout(auth: Auth, conn: Connection | undefined = auth.activeConnection): Promise<void> {
+    return telemetry.function_call.run(
+        async () => {
+            if (conn?.type === 'sso') {
+                // TODO: does deleting the connection make sense UX-wise?
+                // this makes it disappear from the list of available connections
+                await auth.deleteConnection(conn)
+
+                const iamConnections = (await auth.listConnections()).filter((c) => c.type === 'iam')
+                const fallbackConn = iamConnections.find((c) => c.id === 'profile:default') ?? iamConnections[0]
+                if (fallbackConn !== undefined) {
+                    await auth.useConnection(fallbackConn)
+                }
+            } else {
+                await auth.logout()
+
+                const fallbackConn = (await auth.listConnections()).find((c) => c.type === 'sso')
+                if (fallbackConn !== undefined) {
+                    await auth.useConnection(fallbackConn)
+                }
+            }
+        },
+        { emit: false, functionId: { name: 'signoutAuthUtils' } }
+    )
 }
 
 export const createBuilderIdItem = () =>
@@ -176,20 +229,25 @@ export async function createStartUrlPrompter(title: string, requiredScopes?: str
 }
 
 export async function createBuilderIdConnection(auth: Auth, scopes?: string[]) {
-    const newProfile = createBuilderIdProfile(scopes)
-    const existingConn = (await auth.listConnections()).find(isBuilderIdConnection)
-    if (!existingConn) {
-        return auth.createConnection(newProfile)
-    }
+    return telemetry.function_call.run(
+        async () => {
+            const newProfile = createBuilderIdProfile(scopes)
+            const existingConn = (await auth.listConnections()).find(isBuilderIdConnection)
+            if (!existingConn) {
+                return auth.createConnection(newProfile)
+            }
 
-    const userResponse = await promptLogoutExistingBuilderIdConnection()
-    if (userResponse !== 'signout') {
-        throw new CancellationError('user')
-    }
+            const userResponse = await promptLogoutExistingBuilderIdConnection()
+            if (userResponse !== 'signout') {
+                throw new CancellationError('user')
+            }
 
-    await signout(auth, existingConn)
+            await signout(auth, existingConn)
 
-    return auth.createConnection(newProfile)
+            return auth.createConnection(newProfile)
+        },
+        { emit: false, functionId: { name: 'createBuilderIdConnectionAuthUtils' } }
+    )
 }
 
 /**
@@ -340,14 +398,19 @@ export function createConnectionPrompter(auth: Auth, type?: 'iam' | 'iam-only' |
     prompter.quickPick.onDidTriggerItemButton(async (e) => {
         // User wants to delete a specific connection
         if (e.button.tooltip === deleteConnection) {
-            telemetry.ui_click.emit({ elementId: 'connection_deleteFromList' })
-            const conn = e.item.data as Connection
+            await telemetry.function_call.run(
+                async () => {
+                    telemetry.ui_click.emit({ elementId: 'connection_deleteFromList' })
+                    const conn = e.item.data as Connection
 
-            // Set prompter in to a busy state so that
-            // tests must wait for refresh to fully complete
-            prompter.busy = true
-            await auth.deleteConnection(conn)
-            refreshPrompter()
+                    // Set prompter in to a busy state so that
+                    // tests must wait for refresh to fully complete
+                    prompter.busy = true
+                    await auth.deleteConnection(conn)
+                    refreshPrompter()
+                },
+                { emit: false, functionId: { name: 'quickPickDeleteConnection' } }
+            )
         }
     })
 
@@ -672,6 +735,19 @@ export class ExtensionUse {
         return this.wasExtensionUpdated
     }
 
+    /**
+     * Returns a {@link ExtStartUpSource} based on the current state of the extension.
+     */
+    sourceForTelemetry(): ExtStartUpSource {
+        if (this.isFirstUse()) {
+            return ExtStartUpSources.firstStartUp
+        } else if (this.wasUpdated()) {
+            return ExtStartUpSources.update
+        } else {
+            return ExtStartUpSources.reload
+        }
+    }
+
     private updateMemento(key: 'isExtensionFirstUse' | 'lastExtensionVersion', val: any) {
         globals.globalState.tryUpdate(key, val)
     }
@@ -715,4 +791,10 @@ export function getAuthFormIdsFromConnection(conn?: Connection): AuthFormId[] {
     }
 
     return authIds
+}
+
+export function initializeCredentialsProviderManager() {
+    const manager = CredentialsProviderManager.getInstance()
+    manager.addProviderFactory(new SharedCredentialsProviderFactory())
+    manager.addProviders(new Ec2CredentialsProvider(), new EcsCredentialsProvider(), new EnvVarsCredentialsProvider())
 }

@@ -29,7 +29,6 @@ import { applyPatch } from 'diff'
 import { closeSecurityIssueWebview, showSecurityIssueWebview } from '../views/securityIssue/securityIssueWebview'
 import { Mutable } from '../../shared/utilities/tsUtils'
 import { CodeWhispererSource } from './types'
-import { FeatureConfigProvider } from '../service/featureConfigProvider'
 import { TelemetryHelper } from '../util/telemetryHelper'
 import { Auth, AwsConnection } from '../../auth'
 import { once } from '../../shared/utilities/functionUtils'
@@ -42,8 +41,9 @@ import { ToolkitError, getTelemetryReason, getTelemetryReasonDesc } from '../../
 import { isRemoteWorkspace } from '../../shared/vscode/env'
 import { isBuilderIdConnection } from '../../auth/connection'
 import globals from '../../shared/extensionGlobals'
-import { getVscodeCliPath, tryRun } from '../../shared/utilities/pathFind'
+import { getVscodeCliPath } from '../../shared/utilities/pathFind'
 import { setContext } from '../../shared/vscode/setContext'
+import { tryRun } from '../../shared/utilities/pathFind'
 
 const MessageTimeOut = 5_000
 
@@ -302,13 +302,6 @@ function focusQAfterDelay() {
     }, 1000)
 }
 
-export const fetchFeatureConfigsCmd = Commands.declare(
-    { id: 'aws.amazonq.fetchFeatureConfigs', logging: false },
-    () => async () => {
-        await FeatureConfigProvider.instance.fetchFeatureConfigs()
-    }
-)
-
 /**
  * Actually install Amazon Q.
  * Sometimes reload VS Code window after installation is necessary
@@ -470,7 +463,7 @@ export const registerToolkitApiCallback = Commands.declare(
             } else if (isExtensionActive(VSCODE_EXTENSION_ID.awstoolkit)) {
                 // when this command is executed by Amazon Q activation
                 const toolkitExt = vscode.extensions.getExtension(VSCODE_EXTENSION_ID.awstoolkit)
-                _toolkitApi = toolkitExt?.exports.getApi(VSCODE_EXTENSION_ID.amazonq)
+                _toolkitApi = toolkitExt?.exports?.getApi(VSCODE_EXTENSION_ID.amazonq)
             }
             if (_toolkitApi) {
                 registerToolkitApiCallbackOnce()

@@ -8,7 +8,7 @@ import { toTitleCase } from '../utilities/textUtilities'
 import { getLogger, NullLogger } from '../logger/logger'
 import { FunctionKeys, Functions, getFunctions } from '../utilities/classUtils'
 import { TreeItemContent, TreeNode } from '../treeview/resourceTreeDataProvider'
-import { telemetry, MetricName, VscodeExecuteCommand, Metric } from '../telemetry/telemetry'
+import { telemetry, MetricName, VscodeExecuteCommand, Metric, Span } from '../telemetry/telemetry'
 import globals from '../extensionGlobals'
 import { ToolkitError } from '../errors'
 import crypto from 'crypto'
@@ -496,15 +496,20 @@ function getInstrumenter(
     const fields = findFieldsToAddToMetric(id.args, id.compositeKey)
 
     return <T extends Callback>(fn: T, ...args: Parameters<T>) =>
-        span.run((span) => {
-            ;(span as Metric<VscodeExecuteCommand>).record({
-                command: id.id,
-                debounceCount,
-                ...fields,
-            })
+        span.run(
+            (span) => {
+                ;(span as Span<VscodeExecuteCommand>).record({
+                    command: id.id,
+                    debounceCount,
+                    ...fields,
+                })
 
-            return fn(...args)
-        })
+                return fn(...args)
+            },
+            // wrap all command executions with their ID as context for telemetry.
+            // this will give us a better idea on the entrypoints of executions
+            { functionId: { name: id.id, class: 'Commands' } }
+        )
 }
 
 export const unsetSource = 'sourceImproperlySet'

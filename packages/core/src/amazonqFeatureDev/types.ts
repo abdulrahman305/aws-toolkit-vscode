@@ -9,7 +9,7 @@ import type { CancellationTokenSource } from 'vscode'
 import { Messenger } from './controllers/chat/messenger/messenger'
 import { FeatureDevClient } from './client/featureDev'
 import { TelemetryHelper } from './util/telemetryHelper'
-import { CodeReference } from '../amazonq/webview/ui/connector'
+import { CodeReference, UploadHistory } from '../amazonq/webview/ui/connector'
 import { DiffTreeFileInfo } from '../amazonq/webview/ui/diffTree/types'
 
 export type Interaction = {
@@ -21,6 +21,7 @@ export type Interaction = {
 export interface SessionStateInteraction {
     nextState: SessionState | Omit<SessionState, 'uploadId'> | undefined
     interaction: Interaction
+    currentCodeGenerationId?: string
 }
 
 export enum DevPhase {
@@ -50,7 +51,7 @@ export enum FollowUpTypes {
     SendFeedback = 'SendFeedback',
 }
 
-export type SessionStatePhase = DevPhase.INIT | DevPhase.APPROACH | DevPhase.CODEGEN
+export type SessionStatePhase = DevPhase.INIT | DevPhase.CODEGEN
 
 export type CurrentWsFolders = [vscode.WorkspaceFolder, ...vscode.WorkspaceFolder[]]
 
@@ -60,13 +61,16 @@ export interface SessionState {
     readonly references?: CodeReference[]
     readonly phase?: SessionStatePhase
     readonly uploadId: string
-    approach: string
-    readonly tokenSource: CancellationTokenSource
+    readonly currentIteration?: number
+    currentCodeGenerationId?: string
+    tokenSource?: CancellationTokenSource
+    readonly codeGenerationId?: string
     readonly tabID: string
     interact(action: SessionStateAction): Promise<SessionStateInteraction>
     updateWorkspaceRoot?: (workspaceRoot: string) => void
     codeGenerationRemainingIterationCount?: number
     codeGenerationTotalIterationCount?: number
+    uploadHistory?: UploadHistory
 }
 
 export interface SessionStateConfig {
@@ -75,6 +79,7 @@ export interface SessionStateConfig {
     conversationId: string
     proxyClient: FeatureDevClient
     uploadId: string
+    currentCodeGenerationId?: string
 }
 
 export interface SessionStateAction {
@@ -83,6 +88,8 @@ export interface SessionStateAction {
     messenger: Messenger
     fs: VirtualFileSystem
     telemetry: TelemetryHelper
+    uploadHistory?: UploadHistory
+    tokenSource?: CancellationTokenSource
 }
 
 export type NewFileZipContents = { zipFilePath: string; fileContent: string }
@@ -107,3 +114,11 @@ export interface SessionStorage {
 }
 
 export type LLMResponseType = 'EMPTY' | 'INVALID_STATE' | 'VALID'
+
+export interface UpdateFilesPathsParams {
+    tabID: string
+    filePaths: NewFileInfo[]
+    deletedFiles: DeletedFileInfo[]
+    messageId: string
+    disableFileActions?: boolean
+}

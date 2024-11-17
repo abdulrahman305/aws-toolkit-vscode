@@ -5,38 +5,45 @@
 
 import * as path from 'path'
 
-import { ConversationNotStartedState, PrepareCodeGenState, PrepareRefinementState } from './sessionState'
+import { ConversationNotStartedState, PrepareCodeGenState } from './sessionState'
 import {
-    DevPhase,
     type DeletedFileInfo,
+    FollowUpTypes,
     type Interaction,
     type NewFileInfo,
     type SessionState,
     type SessionStateConfig,
+    UpdateFilesPathsParams,
 } from '../types'
 import { ConversationIdNotFoundError } from '../errors'
 import { referenceLogText } from '../constants'
 import fs from '../../shared/fs/fs'
 import { Messenger } from '../controllers/chat/messenger/messenger'
 import { FeatureDevClient } from '../client/featureDev'
-import { approachRetryLimit, codeGenRetryLimit } from '../limits'
+import { codeGenRetryLimit } from '../limits'
 import { SessionConfig } from './sessionConfigFactory'
 import { telemetry } from '../../shared/telemetry/telemetry'
 import { TelemetryHelper } from '../util/telemetryHelper'
 import { ReferenceLogViewProvider } from '../../codewhisperer/service/referenceLogViewProvider'
 import { AuthUtil } from '../../codewhisperer/util/authUtil'
-
+import { getLogger } from '../../shared'
+import { logWithConversationId } from '../userFacingText'
+import { CodeReference } from '../../amazonq/webview/ui/connector'
+import { UpdateAnswerMessage } from '../views/connector/connector'
+import { MynahIcons } from '@aws/mynah-ui'
+import { i18n } from '../../shared/i18n-helper'
 export class Session {
     private _state?: SessionState | Omit<SessionState, 'uploadId'>
     private task: string = ''
-    private approach: string = ''
     private proxyClient: FeatureDevClient
     private _conversationId?: string
-    private approachRetries: number
     private codeGenRetries: number
     private preloaderFinished = false
     private _latestMessage: string = ''
     private _telemetry: TelemetryHelper
+    private _codeResultMessageId: string | undefined = undefined
+    private _acceptCodeMessageId: string | undefined = undefined
+    private _acceptCodeTelemetrySent = false
 
     // Used to keep track of whether or not the current session is currently authenticating/needs authenticating
     public isAuthenticating: boolean
@@ -45,13 +52,12 @@ export class Session {
         public readonly config: SessionConfig,
         private messenger: Messenger,
         public readonly tabID: string,
-        initialState: Omit<SessionState, 'uploadId'> = new ConversationNotStartedState('', tabID),
+        initialState: Omit<SessionState, 'uploadId'> = new ConversationNotStartedState(tabID),
         proxyClient: FeatureDevClient = new FeatureDevClient()
     ) {
         this._state = initialState
         this.proxyClient = proxyClient
 
-        this.approachRetries = approachRetryLimit
         this.codeGenRetries = codeGenRetryLimit
 
         this._telemetry = new TelemetryHelper()
@@ -81,16 +87,23 @@ export class Session {
 
         await telemetry.amazonq_startConversationInvoke.run(async (span) => {
             this._conversationId = await this.proxyClient.createConversation()
+            getLogger().info(logWithConversationId(this.conversationId))
+
             span.record({ amazonqConversationId: this._conversationId, credentialStartUrl: AuthUtil.instance.startUrl })
         })
 
-        this._state = new PrepareRefinementState(
+        this._state = new PrepareCodeGenState(
             {
                 ...this.getSessionStateConfig(),
                 conversationId: this.conversationId,
+                uploadId: '',
+                currentCodeGenerationId: undefined,
             },
-            '',
-            this.tabID
+            [],
+            [],
+            [],
+            this.tabID,
+            0
         )
     }
 
@@ -106,33 +119,6 @@ export class Session {
             proxyClient: this.proxyClient,
             conversationId: this.conversationId,
         }
-    }
-
-    /**
-     * Triggered by the Generate Code follow up button to move to the code generation phase
-     */
-    initCodegen(): void {
-        this._state = new PrepareCodeGenState(
-            {
-                ...this.getSessionStateConfig(),
-                conversationId: this.conversationId,
-                uploadId: this.uploadId,
-            },
-            this.approach,
-            [],
-            [],
-            [],
-            this.tabID,
-            0
-        )
-        this._latestMessage = ''
-
-        telemetry.amazonq_isApproachAccepted.emit({
-            amazonqConversationId: this.conversationId,
-            enabled: true,
-            result: 'Succeeded',
-            credentialStartUrl: AuthUtil.instance.startUrl,
-        })
     }
 
     async send(msg: string): Promise<Interaction> {
@@ -153,37 +139,77 @@ export class Session {
             fs: this.config.fs,
             messenger: this.messenger,
             telemetry: this.telemetry,
+            tokenSource: this.state.tokenSource,
+            uploadHistory: this.state.uploadHistory,
         })
 
         if (resp.nextState) {
-            // Approach may have been changed after the interaction
-            const newApproach = this.state.approach
-
-            // Cancel the request before moving to a new state
-            this.state.tokenSource.cancel()
-
+            if (!this.state?.tokenSource?.token.isCancellationRequested) {
+                this.state?.tokenSource?.cancel()
+            }
             // Move to the next state
             this._state = resp.nextState
-
-            // If approach was changed then we need to set it in the next state and this state
-            this.state.approach = newApproach
-            this.approach = newApproach
         }
 
         return resp.interaction
     }
 
-    public async updateFilesPaths(
-        tabID: string,
-        filePaths: NewFileInfo[],
-        deletedFiles: DeletedFileInfo[],
-        messageId: string
-    ) {
-        this.messenger.updateFileComponent(tabID, filePaths, deletedFiles, messageId)
+    public async updateFilesPaths(params: UpdateFilesPathsParams) {
+        const { tabID, filePaths, deletedFiles, messageId, disableFileActions = false } = params
+        this.messenger.updateFileComponent(tabID, filePaths, deletedFiles, messageId, disableFileActions)
+        await this.updateChatAnswer(tabID, this.getInsertCodePillText([...filePaths, ...deletedFiles]))
+    }
+
+    public async updateChatAnswer(tabID: string, insertCodePillText: string) {
+        if (this._acceptCodeMessageId) {
+            const answer = new UpdateAnswerMessage(
+                {
+                    messageId: this._acceptCodeMessageId,
+                    messageType: 'system-prompt',
+                    followUps: [
+                        {
+                            pillText: insertCodePillText,
+                            type: FollowUpTypes.InsertCode,
+                            icon: 'ok' as MynahIcons,
+                            status: 'success',
+                        },
+                        {
+                            pillText: i18n('AWS.amazonq.featureDev.pillText.provideFeedback'),
+                            type: FollowUpTypes.ProvideFeedbackAndRegenerateCode,
+                            icon: 'refresh' as MynahIcons,
+                            status: 'info',
+                        },
+                    ],
+                },
+                tabID
+            )
+            this.messenger.updateChatAnswer(answer)
+        }
     }
 
     public async insertChanges() {
-        for (const filePath of this.state.filePaths?.filter((i) => !i.rejected) ?? []) {
+        const newFilePaths =
+            this.state.filePaths?.filter((filePath) => !filePath.rejected && !filePath.changeApplied) ?? []
+        await this.insertNewFiles(newFilePaths)
+
+        const deletedFiles =
+            this.state.deletedFiles?.filter((deletedFile) => !deletedFile.rejected && !deletedFile.changeApplied) ?? []
+        await this.applyDeleteFiles(deletedFiles)
+
+        await this.insertCodeReferenceLogs(this.state.references ?? [])
+
+        if (this._codeResultMessageId) {
+            await this.updateFilesPaths({
+                tabID: this.state.tabID,
+                filePaths: this.state.filePaths ?? [],
+                deletedFiles: this.state.deletedFiles ?? [],
+                messageId: this._codeResultMessageId,
+            })
+        }
+    }
+
+    public async insertNewFiles(newFilePaths: NewFileInfo[]) {
+        for (const filePath of newFilePaths) {
             const absolutePath = path.join(filePath.workspaceFolder.uri.fsPath, filePath.relativePath)
 
             const uri = filePath.virtualMemoryUri
@@ -192,16 +218,59 @@ export class Session {
 
             await fs.mkdir(path.dirname(absolutePath))
             await fs.writeFile(absolutePath, decodedContent)
+            filePath.changeApplied = true
         }
+    }
 
-        for (const filePath of this.state.deletedFiles?.filter((i) => !i.rejected) ?? []) {
+    public async applyDeleteFiles(deletedFiles: DeletedFileInfo[]) {
+        for (const filePath of deletedFiles) {
             const absolutePath = path.join(filePath.workspaceFolder.uri.fsPath, filePath.relativePath)
             await fs.delete(absolutePath)
+            filePath.changeApplied = true
         }
+    }
 
-        for (const ref of this.state.references ?? []) {
+    public async insertCodeReferenceLogs(codeReferences: CodeReference[]) {
+        for (const ref of codeReferences) {
             ReferenceLogViewProvider.instance.addReferenceLog(referenceLogText(ref))
         }
+    }
+
+    public async disableFileList() {
+        if (this._codeResultMessageId === undefined) {
+            return
+        }
+
+        await this.updateFilesPaths({
+            tabID: this.state.tabID,
+            filePaths: this.state.filePaths ?? [],
+            deletedFiles: this.state.deletedFiles ?? [],
+            messageId: this._codeResultMessageId,
+            disableFileActions: true,
+        })
+        this._codeResultMessageId = undefined
+    }
+
+    public updateCodeResultMessageId(messageId?: string) {
+        this._codeResultMessageId = messageId
+    }
+
+    public updateAcceptCodeMessageId(messageId?: string) {
+        this._acceptCodeMessageId = messageId
+    }
+
+    public updateAcceptCodeTelemetrySent(sent: boolean) {
+        this._acceptCodeTelemetrySent = sent
+    }
+
+    public getInsertCodePillText(files: Array<NewFileInfo | DeletedFileInfo>) {
+        if (files.every((file) => file.rejected || file.changeApplied)) {
+            return i18n('AWS.amazonq.featureDev.pillText.continue')
+        }
+        if (files.some((file) => file.rejected || file.changeApplied)) {
+            return i18n('AWS.amazonq.featureDev.pillText.acceptRemainingChanges')
+        }
+        return i18n('AWS.amazonq.featureDev.pillText.acceptAllChanges')
     }
 
     get state() {
@@ -209,6 +278,10 @@ export class Session {
             throw new Error("State should be initialized before it's read")
         }
         return this._state
+    }
+
+    get currentCodeGenerationId() {
+        return this.state.currentCodeGenerationId
     }
 
     get uploadId() {
@@ -219,25 +292,11 @@ export class Session {
     }
 
     get retries() {
-        switch (this.state.phase) {
-            case DevPhase.APPROACH:
-                return this.approachRetries
-            case DevPhase.CODEGEN:
-                return this.codeGenRetries
-            default:
-                return this.approachRetries
-        }
+        return this.codeGenRetries
     }
 
     decreaseRetries() {
-        switch (this.state.phase) {
-            case DevPhase.APPROACH:
-                this.approachRetries -= 1
-                break
-            case DevPhase.CODEGEN:
-                this.codeGenRetries -= 1
-                break
-        }
+        this.codeGenRetries -= 1
     }
     get conversationId() {
         if (!this._conversationId) {
@@ -257,5 +316,13 @@ export class Session {
 
     get telemetry() {
         return this._telemetry
+    }
+
+    get acceptCodeMessageId() {
+        return this._acceptCodeMessageId
+    }
+
+    get acceptCodeTelemetrySent() {
+        return this._acceptCodeTelemetrySent
     }
 }

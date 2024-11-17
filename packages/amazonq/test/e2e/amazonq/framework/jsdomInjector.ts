@@ -20,6 +20,12 @@ export function injectJSDOM() {
     global.HTMLElement = dom.window.HTMLElement
     global.Node = dom.window.Node
 
+    global.ResizeObserver = class ResizeObserver {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+    }
+
     // jsdom doesn't have support for innerText: https://github.com/jsdom/jsdom/issues/1245 which mynah ui uses
     Object.defineProperty(global.Element.prototype, 'innerText', {
         get() {
@@ -28,5 +34,5 @@ export function injectJSDOM() {
     })
 
     // jsdom doesn't have support for structuredClone. See https://github.com/jsdom/jsdom/issues/3363
-    global.structuredClone = (val) => JSON.parse(JSON.stringify(val))
+    global.structuredClone = (val: any) => JSON.parse(JSON.stringify(val))
 }

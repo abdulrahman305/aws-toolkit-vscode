@@ -5,16 +5,16 @@
 
 import * as vscode from 'vscode'
 import { ExtensionContext, window } from 'vscode'
-import { Auth } from 'aws-core-vscode/auth'
 import { telemetry } from 'aws-core-vscode/telemetry'
-import { CodeWhispererSettings } from 'aws-core-vscode/codewhisperer'
+import { AuthUtil, CodeWhispererSettings } from 'aws-core-vscode/codewhisperer'
 import { Commands, placeholder, funcUtil } from 'aws-core-vscode/shared'
 import * as amazonq from 'aws-core-vscode/amazonq'
+import { init as inlineChatInit } from '../../inlineChat/app'
 
 export async function activate(context: ExtensionContext) {
     const appInitContext = amazonq.DefaultAmazonQAppInitContext.instance
 
-    registerApps(appInitContext)
+    registerApps(appInitContext, context)
 
     const provider = new amazonq.AmazonQChatViewProvider(
         context,
@@ -26,7 +26,11 @@ export async function activate(context: ExtensionContext) {
     await amazonq.TryChatCodeLensProvider.register(appInitContext.onDidChangeAmazonQVisibility.event)
 
     const setupLsp = funcUtil.debounce(async () => {
-        void amazonq.LspController.instance.trySetupLsp(context)
+        void amazonq.LspController.instance.trySetupLsp(context, {
+            startUrl: AuthUtil.instance.startUrl,
+            maxIndexSize: CodeWhispererSettings.instance.getMaxIndexSize(),
+            isVectorIndexEnabled: CodeWhispererSettings.instance.isLocalIndexEnabled(),
+        })
     }, 5000)
 
     context.subscriptions.push(
@@ -61,10 +65,11 @@ export async function activate(context: ExtensionContext) {
     void setupAuthNotification()
 }
 
-function registerApps(appInitContext: amazonq.AmazonQAppInitContext) {
+function registerApps(appInitContext: amazonq.AmazonQAppInitContext, context: ExtensionContext) {
     amazonq.cwChatAppInit(appInitContext)
     amazonq.featureDevChatAppInit(appInitContext)
     amazonq.gumbyChatAppInit(appInitContext)
+    inlineChatInit(context)
 }
 
 /**
@@ -81,7 +86,7 @@ async function setupAuthNotification() {
 
     async function tryShowNotification() {
         // Do not show the notification if the IDE starts and user is already authenticated.
-        if (Auth.instance.activeConnection) {
+        if (AuthUtil.instance.isConnected()) {
             notificationDisplayed = true
         }
 

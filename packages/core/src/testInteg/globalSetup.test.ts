@@ -8,13 +8,14 @@
  */
 import vscode from 'vscode'
 import { getLogger } from '../shared/logger'
-import { WinstonToolkitLogger } from '../shared/logger/winstonToolkitLogger'
+import { ToolkitLogger } from '../shared/logger/toolkitLogger'
 import { mapTestErrors, normalizeError, patchObject, setRunnableTimeout } from '../test/setupUtil'
 import { getTestWindow, resetTestWindow } from '../test/shared/vscode/window'
 import * as sinon from 'sinon'
 import * as tokenProvider from '../auth/sso/ssoAccessTokenProvider'
 import * as testUtil from '../test/testUtil'
 import { DeviceFlowAuthorization } from '../auth/sso/ssoAccessTokenProvider'
+import { globals } from '../shared'
 
 // ASSUMPTION: Tests are not run concurrently
 
@@ -44,8 +45,8 @@ export async function mochaGlobalSetup(extensionId: string) {
 
         // Log as much as possible, useful for debugging integration tests.
         getLogger().setLogLevel('debug')
-        if (getLogger() instanceof WinstonToolkitLogger) {
-            ;(getLogger() as WinstonToolkitLogger).logToConsole()
+        if (getLogger() instanceof ToolkitLogger) {
+            ;(getLogger() as ToolkitLogger).logToConsole()
         }
     }
 }
@@ -57,6 +58,10 @@ export async function mochaGlobalTeardown(this: Mocha.Context) {
 }
 
 export const mochaHooks = {
+    beforeEach(this: Mocha.Context) {
+        globals.telemetry.clearRecords()
+        globals.telemetry.logger.clear()
+    },
     afterEach(this: Mocha.Context) {
         patchWindow()
     },

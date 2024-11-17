@@ -6,6 +6,11 @@
             "description": "The time it takes to generate approach response"
         },
         {
+            "name": "proxiedSessionId",
+            "type": "string",
+            "description": "The sessionId of the extension instance that this instance is reporting on behalf of."
+        },
+        {
             "name": "documentFormat",
             "type": "string",
             "allowedValues": ["JSON, YAML"],
@@ -58,7 +63,8 @@
                 "showExample",
                 "citeSources",
                 "explainLineByLine",
-                "explainCodeSelection"
+                "explainCodeSelection",
+                "generateUnitTests"
             ],
             "description": "Explict user intent associated with a chat message"
         },
@@ -96,11 +102,6 @@
             "name": "amazonqIndexCpuUsagePercentage",
             "type": "int",
             "description": "CPU used by LSP server as a percentage of all available CPUs on the system"
-        },
-        {
-            "name": "cwsprChatProgrammingLanguage",
-            "type": "string",
-            "description": "Programming language associated with the message"
         },
         {
             "name": "cwsprChatConversationType",
@@ -156,17 +157,42 @@
         {
             "name": "cwsprChatTimeToFirstChunk",
             "type": "int",
-            "description": "Time taken in ms to get back the first chunk"
+            "description": "The time between when the conversation id was created and when we got back the first usable result"
         },
         {
             "name": "cwsprChatTimeBetweenChunks",
             "type": "string",
-            "description": "Time (list of int) taken in ms between chunks"
+            "description": "An array of time when successive chunks of data are received from the server"
         },
         {
             "name": "cwsprChatFullResponseLatency",
             "type": "int",
-            "description": "Time taken to get the full response in ms"
+            "description": "The time between when the conversation id was created and the final response from the server was received"
+        },
+        {
+            "name": "cwsprChatTimeToFirstUsableChunk",
+            "type": "int",
+            "description": "The time between the initial server request, including creating the conversation id, and the first usable result"
+        },
+        {
+            "name": "cwsprChatFullServerResponseLatency",
+            "type": "int",
+            "description": "The time between the initial server request, including creating the conversation id, and the final response from the server"
+        },
+        {
+            "name": "cwsprChatTimeToFirstDisplay",
+            "type": "int",
+            "description": "The time between the user pressing enter and when the first chunk of data is displayed to the user"
+        },
+        {
+            "name": "cwsprChatTimeBetweenDisplays",
+            "type": "string",
+            "description": "An array of time when successive chunks of server responses are displayed to the user"
+        },
+        {
+            "name": "cwsprChatFullDisplayLatency",
+            "type": "int",
+            "description": "The time between the user pressing enter and the entire response being rendered"
         },
         {
             "name": "cwsprChatResponseLength",
@@ -177,22 +203,6 @@
             "name": "cwsprChatRequestLength",
             "type": "int",
             "description": "Number of characters in request"
-        },
-        {
-            "name": "cwsprChatInteractionType",
-            "allowedValues": [
-                "insertAtCursor",
-                "copySnippet",
-                "copy",
-                "clickLink",
-                "clickFollowUp",
-                "hoverReference",
-                "upvote",
-                "downvote",
-                "clickBodyLink"
-            ],
-            "type": "string",
-            "description": "Indicates the specific interaction type with a message in a conversation"
         },
         {
             "name": "cwsprChatInteractionTarget",
@@ -248,7 +258,7 @@
         {
             "name": "authStatus",
             "type": "string",
-            "allowedValues": ["connected", "notConnected", "expired"],
+            "allowedValues": ["connected", "notConnected", "expired", "connectedWithNetworkError"],
             "description": "Status of the an auth connection."
         },
         {
@@ -275,6 +285,71 @@
             "name": "connectionState",
             "type": "string",
             "description": "A detailed state of a specific auth connection. Use `authStatus` for a higher level view of an extension's general connection."
+        },
+        {
+            "name": "userCpuUsage",
+            "type": "int",
+            "description": "Percentage of user cpu usage (user space)"
+        },
+        {
+            "name": "systemCpuUsage",
+            "type": "int",
+            "description": "Percentage of system cpu usage (kernal space)"
+        },
+        {
+            "name": "heapTotal",
+            "type": "int",
+            "description": "Memory heap usage in MB"
+        },
+        {
+            "name": "className",
+            "type": "string",
+            "description": "The name of the class"
+        },
+        {
+            "name": "functionName",
+            "type": "string",
+            "description": "The name of the function"
+        },
+        {
+            "name": "webviewName",
+            "type": "string",
+            "description": "The name of the webview"
+        },
+        {
+            "name": "architecture",
+            "type": "string",
+            "description": "The CPU architecture"
+        },
+        {
+            "name": "timestamp",
+            "type": "int",
+            "description": "A timestamp in milliseconds"
+        },
+        {
+            "name": "traceId",
+            "type": "string",
+            "description": "The unique identifier of a trace"
+        },
+        {
+            "name": "amazonqChatMessageSentTime",
+            "type": "int",
+            "description": "Time when a user initial pressed enter in the chat"
+        },
+        {
+            "name": "amazonqEditorReceivedMessageMs",
+            "type": "int",
+            "description": "Duration between user pressing enter and the editor receiving the message in ms"
+        },
+        {
+            "name": "amazonqFeatureReceivedMessageMs",
+            "type": "int",
+            "description": "Duration between the editor receiving the message and the partner teams code receiving it in ms"
+        },
+        {
+            "name": "amazonqMessageDisplayedMs",
+            "type": "int",
+            "description": "Duration between the partner teams code receiving the message and when the message was finally displayed in ms"
         }
     ],
     "metrics": [
@@ -693,6 +768,21 @@
                     "type": "cwsprChatFullResponseLatency"
                 },
                 {
+                    "type": "cwsprChatTimeToFirstUsableChunk"
+                },
+                {
+                    "type": "cwsprChatFullServerResponseLatency"
+                },
+                {
+                    "type": "cwsprChatTimeToFirstDisplay"
+                },
+                {
+                    "type": "cwsprChatFullDisplayLatency"
+                },
+                {
+                    "type": "cwsprChatTimeBetweenDisplays"
+                },
+                {
                     "type": "cwsprChatRequestLength"
                 },
                 {
@@ -758,53 +848,6 @@
                 },
                 {
                     "type": "cwsprChatResponseErrorReason",
-                    "required": false
-                }
-            ]
-        },
-        {
-            "name": "amazonq_interactWithMessage",
-            "description": "When a user interacts with a message in the conversation",
-            "metadata": [
-                {
-                    "type": "cwsprChatConversationId"
-                },
-                {
-                    "type": "credentialStartUrl",
-                    "required": false
-                },
-                {
-                    "type": "cwsprChatMessageId"
-                },
-                {
-                    "type": "cwsprChatInteractionType"
-                },
-                {
-                    "type": "cwsprChatInteractionTarget",
-                    "required": false
-                },
-                {
-                    "type": "cwsprChatAcceptedCharactersLength",
-                    "required": false
-                },
-                {
-                    "type": "cwsprChatAcceptedNumberOfLines",
-                    "required": false
-                },
-                {
-                    "type": "cwsprChatHasReference",
-                    "required": false
-                },
-                {
-                    "type": "cwsprChatCodeBlockIndex",
-                    "required": false
-                },
-                {
-                    "type": "cwsprChatTotalCodeBlocks",
-                    "required": false
-                },
-                {
-                    "type": "cwsprChatHasProjectContext",
                     "required": false
                 }
             ]
@@ -876,7 +919,9 @@
             "description": "User clicked on the thumbs up button to say that they are unsatisfied",
             "unit": "Count",
             "metadata": [
-                { "type": "amazonqConversationId" },
+                {
+                    "type": "amazonqConversationId"
+                },
                 {
                     "type": "credentialStartUrl",
                     "required": false
@@ -888,7 +933,9 @@
             "description": "User clicked on the thumbs down button to say that they are unsatisfied",
             "unit": "Count",
             "metadata": [
-                { "type": "amazonqConversationId" },
+                {
+                    "type": "amazonqConversationId"
+                },
                 {
                     "type": "credentialStartUrl",
                     "required": false
@@ -900,7 +947,9 @@
             "description": "User clicked on the thumbs up button, to mention that they are satisfied",
             "unit": "Count",
             "metadata": [
-                { "type": "amazonqConversationId" },
+                {
+                    "type": "amazonqConversationId"
+                },
                 {
                     "type": "credentialStartUrl",
                     "required": false
@@ -912,7 +961,9 @@
             "description": "User clicked on the thumbs down button to say that they are unsatisfied",
             "unit": "Count",
             "metadata": [
-                { "type": "amazonqConversationId" },
+                {
+                    "type": "amazonqConversationId"
+                },
                 {
                     "type": "credentialStartUrl",
                     "required": false
@@ -924,21 +975,26 @@
             "description": "User reviewed changes",
             "passive": true,
             "metadata": [
-                { "type": "enabled" },
-                { "type": "amazonqConversationId" },
+                {
+                    "type": "enabled"
+                },
+                {
+                    "type": "amazonqConversationId"
+                },
                 {
                     "type": "credentialStartUrl",
                     "required": false
                 }
             ]
         },
-
         {
             "name": "amazonq_startChat",
             "description": "Number of times the user have triggered /dev and started the chat",
             "unit": "Count",
             "metadata": [
-                { "type": "amazonqConversationId" },
+                {
+                    "type": "amazonqConversationId"
+                },
                 {
                     "type": "credentialStartUrl",
                     "required": false
@@ -949,8 +1005,13 @@
             "name": "amazonq_endChat",
             "description": "Captures end of the conversation with amazonq /dev",
             "metadata": [
-                { "type": "amazonqConversationId" },
-                { "type": "amazonqEndOfTheConversationLatency", "required": false },
+                {
+                    "type": "amazonqConversationId"
+                },
+                {
+                    "type": "amazonqEndOfTheConversationLatency",
+                    "required": false
+                },
                 {
                     "type": "credentialStartUrl",
                     "required": false
@@ -961,9 +1022,15 @@
             "name": "amazonq_approachInvoke",
             "description": "Captures Approach generation process",
             "metadata": [
-                { "type": "amazonqConversationId" },
-                { "type": "amazonqGenerateApproachIteration" },
-                { "type": "amazonqGenerateApproachLatency" },
+                {
+                    "type": "amazonqConversationId"
+                },
+                {
+                    "type": "amazonqGenerateApproachIteration"
+                },
+                {
+                    "type": "amazonqGenerateApproachLatency"
+                },
                 {
                     "type": "credentialStartUrl",
                     "required": false
@@ -974,7 +1041,10 @@
             "name": "amazonq_startConversationInvoke",
             "description": "Captures startConversation invocation process",
             "metadata": [
-                { "type": "amazonqConversationId", "required": false },
+                {
+                    "type": "amazonqConversationId",
+                    "required": false
+                },
                 {
                     "type": "credentialStartUrl",
                     "required": false
@@ -985,8 +1055,13 @@
             "name": "amazonq_createUpload",
             "description": "Captures createUploadUrl invocation process",
             "metadata": [
-                { "type": "amazonqConversationId" },
-                { "type": "amazonqRepositorySize", "required": false },
+                {
+                    "type": "amazonqConversationId"
+                },
+                {
+                    "type": "amazonqRepositorySize",
+                    "required": false
+                },
                 {
                     "type": "credentialStartUrl",
                     "required": false
@@ -1005,47 +1080,6 @@
             ]
         },
         {
-            "name": "codewhisperer_codePercentage",
-            "description": "Percentage of user tokens against suggestions until 5 mins of time",
-            "metadata": [
-                {
-                    "type": "codewhispererAcceptedTokens"
-                },
-                {
-                    "type": "codewhispererLanguage"
-                },
-                {
-                    "type": "codewhispererPercentage"
-                },
-                {
-                    "type": "codewhispererTotalTokens"
-                },
-                {
-                    "type": "codewhispererUserInputDetails",
-                    "required": false
-                },
-                {
-                    "type": "codewhispererUserGroup"
-                },
-                {
-                    "type": "reason",
-                    "required": false
-                },
-                {
-                    "type": "successCount"
-                },
-                {
-                    "type": "codewhispererCustomizationArn",
-                    "required": false
-                },
-                {
-                    "type": "credentialStartUrl",
-                    "required": false
-                }
-            ],
-            "passive": true
-        },
-        {
             "name": "auth_modifyConnection",
             "description": "An auth connection was modified in some way, e.g. deleted, updated",
             "metadata": [
@@ -1058,11 +1092,19 @@
                     "required": false
                 },
                 {
+                    "type": "authStatus",
+                    "required": false
+                },
+                {
                     "type": "connectionState",
-                    "required": true
+                    "required": false
                 },
                 {
                     "type": "credentialStartUrl",
+                    "required": false
+                },
+                {
+                    "type": "sessionDuration",
                     "required": false
                 },
                 {
@@ -1076,13 +1118,118 @@
                 {
                     "type": "ssoRegistrationExpiresAt",
                     "required": false
+                },
+                {
+                    "type": "id",
+                    "required": false
+                }
+            ],
+            "passive": true
+        },
+        {
+            "name": "function_call",
+            "description": "Represents a function call. In most cases this should wrap code with a run(), then you can add context.",
+            "metadata": [
+                {
+                    "type": "functionName",
+                    "required": true
+                },
+                {
+                    "type": "className",
+                    "required": false
+                }
+            ],
+            "passive": true
+        },
+        {
+            "name": "webview_load",
+            "description": "Represents a webview load event",
+            "metadata": [
+                {
+                    "type": "webviewName",
+                    "required": true
                 }
             ]
         },
         {
-            "name": "function_call",
-            "description": "Represents a function call",
-            "metadata": []
+            "name": "webview_error",
+            "description": "Represents an error that occurs in a webview",
+            "metadata": [
+                {
+                    "type": "webviewName",
+                    "required": true
+                }
+            ]
+        },
+        {
+            "name": "trace_event",
+            "description": "Represents the root trace spanning multiple operations",
+            "passive": true,
+            "metadata": [
+                {
+                    "type": "traceId",
+                    "required": true
+                },
+                {
+                    "type": "name",
+                    "required": true
+                }
+            ]
+        },
+        {
+            "name": "amazonq_chatRoundTrip",
+            "description": "Measures sequential response times in Q chat, from user input to message display. Tracks time intervals between key events: editor receiving the message, feature processing, and final message rendering",
+            "passive": true,
+            "metadata": [
+                {
+                    "type": "amazonqChatMessageSentTime"
+                },
+                {
+                    "type": "amazonqEditorReceivedMessageMs"
+                },
+                {
+                    "type": "amazonqFeatureReceivedMessageMs"
+                },
+                {
+                    "type": "amazonqMessageDisplayedMs"
+                },
+                {
+                    "type": "source"
+                }
+            ]
+        },
+        {
+            "name": "session_end",
+            "description": "Called when stopping the IDE on a best effort basis",
+            "metadata": [
+                {
+                    "type": "proxiedSessionId",
+                    "required": false
+                },
+                {
+                    "type": "timestamp",
+                    "required": false
+                }
+            ]
+        },
+        {
+            "name": "ide_heartbeat",
+            "description": "A heartbeat sent by the extension",
+            "metadata": [
+                {
+                    "type": "id",
+                    "required": true
+                },
+                {
+                    "type": "name",
+                    "required": false
+                },
+                {
+                    "type": "timestamp",
+                    "required": false
+                }
+            ],
+            "passive": true
         }
     ]
 }

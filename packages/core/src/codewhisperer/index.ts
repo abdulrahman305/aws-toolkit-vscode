@@ -25,6 +25,7 @@ export type {
     Completion,
     SendTelemetryEventResponse,
     TelemetryEvent,
+    InlineChatEvent,
 } from './client/codewhispereruserclient.d.ts'
 export type { default as CodeWhispererUserClient } from './client/codewhispereruserclient.d.ts'
 export { SecurityPanelViewProvider } from './views/securityPanelViewProvider'
@@ -53,7 +54,7 @@ export { session } from './util/codeWhispererSession'
 export { onInlineAcceptance } from './commands/onInlineAcceptance'
 export { stopTransformByQ } from './commands/startTransformByQ'
 export { getCompletionItems, getCompletionItem, getLabel } from './service/completionProvider'
-export { featureDefinitions, FeatureConfigProvider } from './service/featureConfigProvider'
+export { featureDefinitions, FeatureConfigProvider } from '../shared/featureConfig'
 export { ReferenceInlineProvider } from './service/referenceInlineProvider'
 export { ReferenceHoverProvider } from './service/referenceHoverProvider'
 export { CWInlineCompletionItemProvider } from './service/inlineCompletionItemProvider'
@@ -87,3 +88,5 @@ export * as supplementalContextUtil from './util/supplementalContext/supplementa
 export * from './service/diagnosticsProvider'
 export * as diagnosticsProvider from './service/diagnosticsProvider'
 export * from './ui/codeWhispererNodes'
+export { getSelectedCustomization } from './util/customizationUtil'
+export { Container } from './service/serviceContainer'

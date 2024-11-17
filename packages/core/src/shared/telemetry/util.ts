@@ -8,8 +8,15 @@ import { env, version } from 'vscode'
 import * as os from 'os'
 import { getLogger } from '../logger'
 import { fromExtensionManifest, migrateSetting, Settings } from '../settings'
-import { memoize } from '../utilities/functionUtils'
-import { isInDevEnv, extensionVersion, isAutomation, isRemoteWorkspace } from '../vscode/env'
+import { memoize, once } from '../utilities/functionUtils'
+import {
+    isInDevEnv,
+    extensionVersion,
+    isAutomation,
+    isRemoteWorkspace,
+    isCloudDesktop,
+    isAmazonInternalOs,
+} from '../vscode/env'
 import { addTypeName } from '../utilities/typeConstructors'
 import globals, { isWeb } from '../extensionGlobals'
 import { mapMetadata } from './telemetryLogger'
@@ -17,8 +24,11 @@ import { Result } from './telemetry.gen'
 import { MetricDatum } from './clienttelemetry'
 import { isValidationExemptMetric } from './exemptMetrics'
 import { isAmazonQ, isCloud9, isSageMaker } from '../../shared/extensionUtilities'
-import { randomUUID } from '../crypto'
+import { isUuid, randomUUID } from '../crypto'
 import { ClassToInterfaceType } from '../utilities/tsUtils'
+import { FunctionEntry, type TelemetryTracer } from './spans'
+import { telemetry } from './telemetry'
+import { v5 as uuidV5 } from 'uuid'
 
 const legacySettingsTelemetryValueDisable = 'Disable'
 const legacySettingsTelemetryValueEnable = 'Enable'
@@ -79,6 +89,67 @@ export function convertLegacy(value: unknown): boolean {
     } else {
         throw new TypeError(`Unknown telemetry setting: ${value}`)
     }
+}
+
+/**
+ * Returns an identifier that uniquely identifies a single application
+ * instance/window of a specific IDE. I.e if I have multiple VS Code
+ * windows open each one will have a unique session ID. This session ID
+ * can be used in conjunction with the client ID to differntiate between
+ * different VS Code windows on a users machine.
+ *
+ * See spec: https://quip-amazon.com/9gqrAqwO5FCE
+ */
+export const getSessionId = once(() => SessionId.getSessionId())
+
+/** IMPORTANT: Use {@link getSessionId()} only. This is exported just for testing. */
+export class SessionId {
+    public static getSessionId(): string {
+        // This implementation does not work in web
+        if (!isWeb()) {
+            return this._getSessionId()
+        }
+        // A best effort at a sessionId just for web mode
+        return this._getVscSessionId()
+    }
+
+    /**
+     * This implementation assumes that the `globalThis` is shared between extensions in the same
+     * Extension Host, so we can share a global variable that way.
+     *
+     * This does not seem to work on web mode since the `globalThis` is not shared due to WebWorker design
+     */
+    private static _getSessionId() {
+        const g = globalThis as any
+        if (g.amzn_sessionId === undefined || !isUuid(g.amzn_sessionId)) {
+            g.amzn_sessionId = randomUUID()
+        }
+        return g.amzn_sessionId
+    }
+
+    /**
+     * `vscode.env.sessionId` looks close to a UUID by does not exactly match it (has additional characters).
+     * As a result we process it through uuidV5 which creates a proper UUID from it.
+     * uuidV5 is idempotent, so as long as `vscode.env.sessionId` returns the same value,
+     * we will get the same UUID.
+     *
+     * We were initially using this implementation for all session ids, but it has some caveats:
+     * - If the extension host crashes, sesionId stays the same since the parent VSC process defines it and that does not crash.
+     *   We wanted it to generate a new sessionId on ext host crash.
+     * - This value may not be reliable, see the following sessionId in telemetry, it contains many events
+     *   all from different client ids: `sessionId: cabea8e7-a8a1-5e51-a60e-07218f4a5937`
+     */
+    private static _getVscSessionId() {
+        return uuidV5(vscode.env.sessionId, this.sessionIdNonce)
+    }
+    /**
+     * This is an arbitrary nonce that is used in creating a v5 UUID for Session ID. We only
+     * have this since the spec requires it.
+     * - This should ONLY be used by {@link getSessionId}.
+     * - This value MUST NOT change during runtime, otherwise {@link getSessionId} will lose its
+     *   idempotency. But, if there was a reason to change the value in a PR, it would not be an issue.
+     */
+    private static readonly sessionIdNonce = '44cfdb20-b30b-4585-a66c-9f48f24f99b5'
 }
 
 /**
@@ -175,18 +246,29 @@ export function getUserAgent(
     return pairs.join(' ')
 }
 
-type EnvType =
+/**
+ * All the types of ENVs the extension can run in.
+ *
+ * NOTES:
+ * - append `-amzn` for any environment internal to Amazon
+ */
+export type EnvType =
     | 'cloud9'
     | 'cloud9-codecatalyst'
+    | 'cloudDesktop-amzn'
     | 'codecatalyst'
     | 'local'
     | 'ec2'
+    | 'ec2-amzn' // ec2 but with an internal Amazon OS
     | 'sagemaker'
     | 'test'
     | 'wsl'
     | 'unknown'
 
-export function getComputeEnvType(): EnvType {
+/**
+ * Returns the identifier for the environment that the extension is running in.
+ */
+export async function getComputeEnvType(): Promise<EnvType> {
     if (isCloud9('classic')) {
         return 'cloud9'
     } else if (isCloud9('codecatalyst')) {
@@ -195,7 +277,13 @@ export function getComputeEnvType(): EnvType {
         return 'codecatalyst'
     } else if (isSageMaker()) {
         return 'sagemaker'
-    } else if (isRemoteWorkspace() && !isInDevEnv()) {
+    } else if (isRemoteWorkspace()) {
+        if (isAmazonInternalOs()) {
+            if (await isCloudDesktop()) {
+                return 'cloudDesktop-amzn'
+            }
+            return 'ec2-amzn'
+        }
         return 'ec2'
     } else if (env.remoteName) {
         return 'wsl'
@@ -260,12 +348,13 @@ export function getOptOutPreference() {
     return globals.telemetry.telemetryEnabled ? 'OPTIN' : 'OPTOUT'
 }
 
+export type OperatingSystem = 'MAC' | 'WINDOWS' | 'LINUX'
 /**
  * Useful for populating the sendTelemetryEvent request from codewhisperer's api for publishing custom telemetry events for AB Testing.
  *
  * Returns one of the enum values of the OperatingSystem model (see SendTelemetryRequest model in the codebase)
  */
-export function getOperatingSystem(): 'MAC' | 'WINDOWS' | 'LINUX' {
+export function getOperatingSystem(): OperatingSystem {
     const osId = os.platform() // 'darwin', 'win32', 'linux', etc.
     if (osId === 'darwin') {
         return 'MAC'
@@ -274,4 +363,55 @@ export function getOperatingSystem(): 'MAC' | 'WINDOWS' | 'LINUX' {
     } else {
         return 'LINUX'
     }
+}
+
+/**
+ * Decorator that simply wraps the method with a non-emitting telemetry `run()`, automatically
+ * `record()`ing the provided function id for later use by {@link TelemetryTracer.getFunctionStack()}
+ *
+ * This saves us from needing to wrap the entire function:
+ *
+ * **Before:**
+ * ```
+ * class A {
+ *     myMethod() {
+ *         telemetry.function_call.run(() => {
+ *                 ...
+ *             },
+ *             { emit: false, functionId: { name: 'myMethod', class: 'A' } }
+ *         )
+ *     }
+ * }
+ * ```
+ *
+ * **After:**
+ * ```
+ * class A {
+ *     @withTelemetryContext({ name: 'myMethod', class: 'A' })
+ *     myMethod() {
+ *         ...
+ *     }
+ * }
+ * ```
+ */
+export function withTelemetryContext(functionId: FunctionEntry) {
+    function decorator<This, Args extends any[], Return>(
+        originalMethod: (this: This, ...args: Args) => Return,
+        _context: ClassMethodDecoratorContext // we dont need this currently but it keeps the compiler happy
+    ) {
+        function decoratedMethod(this: This, ...args: Args): Return {
+            return telemetry.function_call.run(
+                () => {
+                    // DEVELOPERS: Set a breakpoint here and step in to it to debug the original function
+                    return originalMethod.call(this, ...args)
+                },
+                {
+                    emit: false,
+                    functionId: functionId,
+                }
+            )
+        }
+        return decoratedMethod
+    }
+    return decorator
 }

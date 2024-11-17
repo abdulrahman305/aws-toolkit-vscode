@@ -20,6 +20,7 @@ import { ClassToInterfaceType } from '../utilities/tsUtils'
 import { getClientId, validateMetricEvent } from './util'
 import { telemetry, MetricBase } from './telemetry'
 import fs from '../fs/fs'
+import fsNode from 'fs/promises'
 import * as collectionUtil from '../utilities/collectionUtils'
 
 export type TelemetryService = ClassToInterfaceType<DefaultTelemetryService>
@@ -110,10 +111,16 @@ export class DefaultTelemetryService {
         if (this.telemetryEnabled && !isAutomation()) {
             const currTime = new globals.clock.Date()
             // This is noisy when running tests in vscode.
-            telemetry.session_end.emit({ value: currTime.getTime() - this.startTime.getTime(), result: 'Succeeded' })
+            telemetry.session_end.emit({
+                result: 'Succeeded',
+                duration: currTime.getTime() - this.startTime.getTime(),
+            })
 
             try {
-                await fs.writeFile(this.persistFilePath, JSON.stringify(this._eventQueue))
+                /**
+                 * This function runs in deactivate() so we must use node fs. See the vscode behavior doc for more info.
+                 */
+                await fsNode.writeFile(this.persistFilePath, JSON.stringify(this._eventQueue))
             } catch {}
         }
     }
@@ -131,6 +138,12 @@ export class DefaultTelemetryService {
             }
         }
         getLogger().verbose(`Telemetry is ${value ? 'enabled' : 'disabled'}`)
+    }
+
+    private _clientId: string | undefined
+    /** Returns the client ID, creating one if it does not exist. */
+    public get clientId(): string {
+        return (this._clientId ??= getClientId(globals.globalState))
     }
 
     public get timer(): NodeJS.Timer | undefined {
@@ -182,9 +195,11 @@ export class DefaultTelemetryService {
     }
 
     /**
-     * Publish metrics to the Telemetry Service.
+     * Publish metrics to the Telemetry Service. Usually it will automatically flush recent events
+     * on a regular interval. This should not be used unless you are interrupting this interval,
+     * e.g. via a forced window reload.
      */
-    private async flushRecords(): Promise<void> {
+    public async flushRecords(): Promise<void> {
         if (this.telemetryEnabled) {
             await this._flushRecords()
         }
@@ -224,8 +239,6 @@ export class DefaultTelemetryService {
 
     private async createDefaultPublisher(): Promise<TelemetryPublisher | undefined> {
         try {
-            // grab our clientId and generate one if it doesn't exist
-            const clientId = getClientId(globals.globalState)
             // grab our Cognito identityId
             const poolId = DefaultTelemetryClient.config.identityPool
             const identityMapJson = globals.globalState.tryGet(
@@ -240,7 +253,7 @@ export class DefaultTelemetryService {
 
             // if we don't have an identity, get one
             if (!identity) {
-                const identityPublisherTuple = await DefaultTelemetryPublisher.fromDefaultIdentityPool(clientId)
+                const identityPublisherTuple = await DefaultTelemetryPublisher.fromDefaultIdentityPool(this.clientId)
 
                 // save it
                 identityMap.set(poolId, identityPublisherTuple.cognitoIdentityId)
@@ -252,7 +265,7 @@ export class DefaultTelemetryService {
                 // return the publisher
                 return identityPublisherTuple.publisher
             } else {
-                return DefaultTelemetryPublisher.fromIdentityId(clientId, identity)
+                return DefaultTelemetryPublisher.fromIdentityId(this.clientId, identity)
             }
         } catch (err) {
             getLogger().error(`Got ${err} while initializing telemetry publisher`)
@@ -315,7 +328,7 @@ export class DefaultTelemetryService {
 
                 return []
             }
-            const input = JSON.parse(await fs.readFileAsString(cachePath))
+            const input = JSON.parse(await fs.readFileText(cachePath))
             const events = filterTelemetryCacheEvents(input)
 
             return events
@@ -459,7 +472,7 @@ export function filterTelemetryCacheEvents(input: any): MetricDatum[] {
                 !Object.prototype.hasOwnProperty.call(item, 'EpochTimestamp') ||
                 !Object.prototype.hasOwnProperty.call(item, 'Unit')
             ) {
-                getLogger().warn(`skipping invalid item in telemetry cache: ${JSON.stringify(item)}\n`)
+                getLogger().warn(`skipping invalid item in telemetry cache: %O\n`, item)
 
                 return false
             }

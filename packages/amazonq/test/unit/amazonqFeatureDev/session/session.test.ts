@@ -61,7 +61,6 @@ describe('session', () => {
 
             const uploadID = '789'
             const tabID = '123'
-            const testApproach = 'test-approach'
             const workspaceFolders = [controllerSetup.workspaceFolder] as CurrentWsFolders
             workspaceFolderUriFsPath = controllerSetup.workspaceFolder.uri.fsPath
             uri = generateVirtualMemoryUri(uploadID, notRejectedFileName)
@@ -76,7 +75,6 @@ describe('session', () => {
 
             const codeGenState = new CodeGenState(
                 testConfig,
-                testApproach,
                 [
                     {
                         zipFilePath: notRejectedFileName,
@@ -85,6 +83,7 @@ describe('session', () => {
                         rejected: false,
                         virtualMemoryUri: uri,
                         workspaceFolder: controllerSetup.workspaceFolder,
+                        changeApplied: false,
                     },
                     {
                         zipFilePath: 'rejectedFile.js',
@@ -93,12 +92,14 @@ describe('session', () => {
                         rejected: true,
                         virtualMemoryUri: generateVirtualMemoryUri(uploadID, 'rejectedFile.js'),
                         workspaceFolder: controllerSetup.workspaceFolder,
+                        changeApplied: false,
                     },
                 ],
                 [],
                 [],
                 tabID,
-                0
+                0,
+                {}
             )
             const session = await createSession({ messenger, sessionState: codeGenState, conversationID })
             encodedContent = new TextEncoder().encode(notRejectedFileContent)

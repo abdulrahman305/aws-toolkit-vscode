@@ -24,7 +24,7 @@ import { getOpenExternalStub } from '../../globalSetup.test'
 import { getTestWindow } from '../../shared/vscode/window'
 import { SeverityLevel } from '../../shared/vscode/message'
 import { ToolkitError } from '../../../shared/errors'
-import * as fs from 'fs'
+import * as fs from 'fs' // eslint-disable-line no-restricted-imports
 import * as path from 'path'
 import { Stub, stub } from '../../utilities/stubber'
 
@@ -108,6 +108,9 @@ describe('SsoAccessTokenProvider', function () {
 
             assert.strictEqual(await cache.token.load(startUrl), undefined)
             assert.strictEqual(await cache.registration.load({ startUrl, region }), undefined)
+            assertTelemetry(`auth_modifyConnection`, [
+                { action: 'deleteSsoCache', source: 'SsoAccessTokenProvider#invalidate' },
+            ])
         })
     })
 
@@ -260,6 +263,50 @@ describe('SsoAccessTokenProvider', function () {
             assert.deepStrictEqual(await sut.createToken(), { ...token, identity: startUrl })
             assert.deepStrictEqual(await sut.getToken(), token)
             assert.notDeepStrictEqual(await sut.getToken(), cachedToken)
+        })
+
+        it(`emits session duration between logins of the same startUrl`, async function () {
+            setupFlow()
+            stubOpen()
+
+            await sut.createToken()
+            clock.tick(5000)
+            await sut.createToken()
+            clock.tick(10_000)
+            await sut.createToken()
+
+            // Mimic when we sign out then in again with the same region+startUrl. The ID is the only thing different.
+            sut = SsoAccessTokenProvider.create(
+                { region, startUrl, identifier: 'bbb' },
+                cache,
+                oidcClient,
+                reAuthState,
+                () => true
+            )
+            await sut.createToken()
+
+            assertTelemetry('aws_loginWithBrowser', [
+                {
+                    credentialStartUrl: startUrl,
+                    awsRegion: region,
+                    sessionDuration: undefined, // A new login.
+                },
+                {
+                    credentialStartUrl: startUrl,
+                    awsRegion: region,
+                    sessionDuration: 5000, // A reauth. 5000 - 0, is the diff between this and previous login
+                },
+                {
+                    credentialStartUrl: startUrl,
+                    awsRegion: region,
+                    sessionDuration: 10000, // A reauth. 15_000 - 5000 is the diff between this and previous login
+                },
+                {
+                    credentialStartUrl: startUrl,
+                    awsRegion: region,
+                    sessionDuration: undefined, // A new login, since we signed out of the last.
+                },
+            ])
         })
 
         it('respects the device authorization expiration time', async function () {

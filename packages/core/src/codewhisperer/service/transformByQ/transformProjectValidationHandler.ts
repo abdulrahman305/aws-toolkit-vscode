@@ -7,10 +7,6 @@ import { getLogger } from '../../../shared/logger'
 import * as CodeWhispererConstants from '../../models/constants'
 import * as vscode from 'vscode'
 import { spawnSync } from 'child_process' // Consider using ChildProcess once we finalize all spawnSync calls
-import { telemetry } from '../../../shared/telemetry/telemetry'
-import { CodeTransformTelemetryState } from '../../../amazonqGumby/telemetry/codeTransformTelemetryState'
-import { javapOutputToTelemetryValue } from '../../../amazonqGumby/telemetry/codeTransformTelemetry'
-import { MetadataResult } from '../../../shared/telemetry/telemetryClient'
 import {
     NoJavaProjectsFoundError,
     NoMavenJavaProjectsFoundError,
@@ -21,7 +17,7 @@ import { checkBuildSystem } from './transformFileHandler'
 export async function getOpenProjects(): Promise<TransformationCandidateProject[]> {
     const folders = vscode.workspace.workspaceFolders
 
-    if (folders === undefined) {
+    if (folders === undefined || folders.length === 0) {
         throw new NoOpenProjectsError()
     }
 
@@ -36,7 +32,7 @@ export async function getOpenProjects(): Promise<TransformationCandidateProject[
     return openProjects
 }
 
-async function getJavaProjects(projects: TransformationCandidateProject[]) {
+export async function getJavaProjects(projects: TransformationCandidateProject[]) {
     const javaProjects = []
     for (const project of projects) {
         const projectPath = project.path
@@ -48,6 +44,9 @@ async function getJavaProjects(projects: TransformationCandidateProject[]) {
         if (javaFiles.length > 0) {
             javaProjects.push(project)
         }
+    }
+    if (javaProjects.length === 0) {
+        throw new NoJavaProjectsFoundError()
     }
     return javaProjects
 }
@@ -63,13 +62,14 @@ async function getMavenJavaProjects(javaProjects: TransformationCandidateProject
         }
     }
 
+    if (mavenJavaProjects.length === 0) {
+        throw new NoMavenJavaProjectsFoundError()
+    }
+
     return mavenJavaProjects
 }
 
-async function getProjectsValidToTransform(
-    mavenJavaProjects: TransformationCandidateProject[],
-    onProjectFirstOpen: boolean = true
-) {
+async function getProjectsValidToTransform(mavenJavaProjects: TransformationCandidateProject[]) {
     const projectsValidToTransform: TransformationCandidateProject[] = []
     for (const project of mavenJavaProjects) {
         let detectedJavaVersion = undefined
@@ -99,16 +99,9 @@ async function getProjectsValidToTransform(
                     const errorCode = (spawnResult.error as any).code ?? 'UNKNOWN'
                     errorReason += `-${errorCode}`
                 }
-                if (!onProjectFirstOpen) {
-                    // TODO: remove deprecated metric once BI started using new metrics
-                    telemetry.codeTransform_isDoubleClickedToTriggerInvalidProject.emit({
-                        codeTransformSessionId: CodeTransformTelemetryState.instance.getSessionId(),
-                        codeTransformPreValidationError: 'NoJavaProject',
-                        codeTransformRuntimeError: errorReason,
-                        result: MetadataResult.Fail,
-                        reason: 'CannotDetermineJavaVersion',
-                    })
-                }
+                getLogger().error(
+                    `CodeTransformation: Error in running javap command = ${errorReason}, log = ${errorLog}`
+                )
             } else {
                 const majorVersionIndex = spawnResult.stdout.indexOf('major version: ')
                 const javaVersion = spawnResult.stdout.slice(majorVersionIndex + 15, majorVersionIndex + 17).trim()
@@ -118,15 +111,6 @@ async function getProjectsValidToTransform(
                     detectedJavaVersion = JDKVersion.JDK11
                 } else {
                     detectedJavaVersion = JDKVersion.UNSUPPORTED
-                    if (!onProjectFirstOpen) {
-                        // TODO: remove deprecated metric once BI started using new metrics
-                        telemetry.codeTransform_isDoubleClickedToTriggerInvalidProject.emit({
-                            codeTransformSessionId: CodeTransformTelemetryState.instance.getSessionId(),
-                            codeTransformPreValidationError: 'UnsupportedJavaVersion',
-                            result: MetadataResult.Fail,
-                            reason: javapOutputToTelemetryValue(javaVersion),
-                        })
-                    }
                 }
             }
         }
@@ -144,46 +128,13 @@ async function getProjectsValidToTransform(
  * As long as the project contains a .java file and a pom.xml file, the project is still considered valid for transformation,
  * and we allow the user to specify the Java version.
  */
-export async function validateOpenProjects(
-    projects: TransformationCandidateProject[],
-    onProjectFirstOpen: boolean = true
-) {
+export async function validateOpenProjects(projects: TransformationCandidateProject[]) {
     const javaProjects = await getJavaProjects(projects)
 
-    if (javaProjects.length === 0) {
-        if (!onProjectFirstOpen) {
-            // TODO: remove deprecated metric once BI started using new metrics
-            telemetry.codeTransform_isDoubleClickedToTriggerInvalidProject.emit({
-                codeTransformSessionId: CodeTransformTelemetryState.instance.getSessionId(),
-                codeTransformPreValidationError: 'NoJavaProject',
-                result: MetadataResult.Fail,
-                reason: 'CouldNotFindJavaProject',
-            })
-        }
-        throw new NoJavaProjectsFoundError()
-    }
-
     const mavenJavaProjects = await getMavenJavaProjects(javaProjects)
-    if (mavenJavaProjects.length === 0) {
-        if (!onProjectFirstOpen) {
-            void vscode.window.showErrorMessage(CodeWhispererConstants.noPomXmlFoundNotification)
-            // TODO: remove deprecated metric once BI started using new metrics
-            telemetry.codeTransform_isDoubleClickedToTriggerInvalidProject.emit({
-                codeTransformSessionId: CodeTransformTelemetryState.instance.getSessionId(),
-                codeTransformPreValidationError: 'NonMavenProject',
-                result: MetadataResult.Fail,
-                reason: 'NoPomFileFound',
-            })
-        }
-        throw new NoMavenJavaProjectsFoundError()
-    }
 
-    /*
-     * These projects we know must contain a pom.xml and a .java file
-     * here we try to get the Java version of each project so that we
-     * can pre-select a default version in the QuickPick for them.
-     */
-    const projectsValidToTransform = await getProjectsValidToTransform(mavenJavaProjects, onProjectFirstOpen)
+    // These projects we know must contain a pom.xml and a .java file
+    const projectsValidToTransform = await getProjectsValidToTransform(mavenJavaProjects)
 
     return projectsValidToTransform
 }

@@ -11,9 +11,16 @@
 import assert from 'assert'
 import * as path from 'path'
 import * as vscode from 'vscode'
-import fs from 'fs'
 import sinon from 'sinon'
-import { createAmazonQUri, getFileDiffUris, getOriginalFileUri, openDeletedDiff, openDiff } from '../../../amazonq'
+import {
+    createAmazonQUri,
+    getFileDiffUris,
+    getOriginalFileUri,
+    openDeletedDiff,
+    openDiff,
+    openFile,
+} from '../../../amazonq'
+import { FileSystem } from '../../../shared/fs/fs'
 
 describe('diff', () => {
     const filePath = path.join('/', 'foo', 'fi')
@@ -35,7 +42,7 @@ describe('diff', () => {
 
     describe('openDiff', () => {
         it('file exists locally', async () => {
-            sandbox.stub(fs, 'existsSync').returns(true)
+            sandbox.stub(FileSystem.prototype, 'exists').resolves(true)
             await openDiff(filePath, rightPath, tabId)
 
             const leftExpected = vscode.Uri.file(filePath)
@@ -44,10 +51,10 @@ describe('diff', () => {
         })
 
         it('file does not exists locally', async () => {
-            sandbox.stub(fs, 'existsSync').returns(false)
+            sandbox.stub(FileSystem.prototype, 'exists').resolves(false)
             await openDiff(filePath, rightPath, tabId)
 
-            const leftExpected = getOriginalFileUri(filePath, tabId)
+            const leftExpected = await getOriginalFileUri(filePath, tabId)
             const rightExpected = createAmazonQUri(rightPath, tabId)
             assert.ok(executeCommandSpy.calledWith('vscode.diff', leftExpected, rightExpected))
         })
@@ -57,40 +64,42 @@ describe('diff', () => {
         const name = 'foo'
 
         it('file exists locally', async () => {
-            sandbox.stub(fs, 'existsSync').returns(true)
+            sandbox.stub(FileSystem.prototype, 'exists').resolves(true)
             await openDeletedDiff(filePath, name, tabId)
 
-            const expectedPath = vscode.Uri.file(filePath)
-            assert.ok(executeCommandSpy.calledWith('vscode.open', expectedPath, {}, `${name} (Deleted)`))
+            const leftExpected = vscode.Uri.file(filePath)
+            const rightExpected = createAmazonQUri('empty', tabId)
+            assert.ok(executeCommandSpy.calledWith('vscode.diff', leftExpected, rightExpected, `${name} (Deleted)`))
         })
 
         it('file does not exists locally', async () => {
-            sandbox.stub(fs, 'existsSync').returns(false)
+            sandbox.stub(FileSystem.prototype, 'exists').resolves(false)
             await openDeletedDiff(filePath, name, tabId)
 
-            const expectedPath = createAmazonQUri('empty', tabId)
-            assert.ok(executeCommandSpy.calledWith('vscode.open', expectedPath, {}, `${name} (Deleted)`))
+            const leftExpected = createAmazonQUri('empty', tabId)
+            const rightExpected = createAmazonQUri('empty', tabId)
+            assert.ok(executeCommandSpy.calledWith('vscode.diff', leftExpected, rightExpected, `${name} (Deleted)`))
         })
     })
 
     describe('getOriginalFileUri', () => {
-        it('file exists locally', () => {
-            sandbox.stub(fs, 'existsSync').returns(true)
-            assert.deepStrictEqual(getOriginalFileUri(filePath, tabId).fsPath, filePath)
+        it('file exists locally', async () => {
+            sandbox.stub(FileSystem.prototype, 'exists').resolves(true)
+            assert.deepStrictEqual((await getOriginalFileUri(filePath, tabId)).fsPath, filePath)
         })
 
-        it('file does not exists locally', () => {
-            sandbox.stub(fs, 'existsSync').returns(false)
+        it('file does not exists locally', async () => {
+            sandbox.stub(FileSystem.prototype, 'exists').resolves(false)
             const expected = createAmazonQUri('empty', tabId)
-            assert.deepStrictEqual(getOriginalFileUri(filePath, tabId), expected)
+            assert.deepStrictEqual(await getOriginalFileUri(filePath, tabId), expected)
         })
     })
 
     describe('getFileDiffUris', () => {
-        it('file exists locally', () => {
-            sandbox.stub(fs, 'existsSync').returns(true)
+        it('file exists locally', async () => {
+            sandbox.stub(FileSystem.prototype, 'exists').resolves(true)
 
-            const { left, right } = getFileDiffUris(filePath, rightPath, tabId)
+            const { left, right } = await getFileDiffUris(filePath, rightPath, tabId)
 
             const leftExpected = vscode.Uri.file(filePath)
             assert.deepStrictEqual(left, leftExpected)
@@ -99,15 +108,32 @@ describe('diff', () => {
             assert.deepStrictEqual(right, rightExpected)
         })
 
-        it('file does not exists locally', () => {
-            sandbox.stub(fs, 'existsSync').returns(false)
-            const { left, right } = getFileDiffUris(filePath, rightPath, tabId)
+        it('file does not exists locally', async () => {
+            sandbox.stub(FileSystem.prototype, 'exists').resolves(false)
+            const { left, right } = await getFileDiffUris(filePath, rightPath, tabId)
 
-            const leftExpected = getOriginalFileUri(filePath, tabId)
+            const leftExpected = await getOriginalFileUri(filePath, tabId)
             assert.deepStrictEqual(left, leftExpected)
 
             const rightExpected = createAmazonQUri(rightPath, tabId)
             assert.deepStrictEqual(right, rightExpected)
+        })
+    })
+
+    describe('openFile', () => {
+        it('file exists locally', async () => {
+            sandbox.stub(FileSystem.prototype, 'exists').resolves(true)
+            await openFile(filePath)
+
+            const expected = vscode.Uri.file(filePath)
+            assert.ok(executeCommandSpy.calledWith('vscode.diff', expected, expected))
+        })
+
+        it('file does not exists locally', async () => {
+            sandbox.stub(FileSystem.prototype, 'exists').resolves(false)
+            await openFile(filePath)
+
+            assert.ok(executeCommandSpy.notCalled)
         })
     })
 })

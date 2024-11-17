@@ -39,16 +39,20 @@ import { isTemplateTargetProperties } from '../../shared/sam/debugger/awsSamDebu
 import { TemplateTargetProperties } from '../../shared/sam/debugger/awsSamDebugConfiguration'
 import { openLaunchJsonFile } from '../../shared/sam/debugger/commands/addSamDebugConfiguration'
 import { waitUntil } from '../../shared/utilities/timeoutUtils'
-import { debugNewSamAppUrl, launchConfigDocUrl } from '../../shared/constants'
-import { getIdeProperties, isCloud9 } from '../../shared/extensionUtilities'
+import {
+    getIdeProperties,
+    getDebugNewSamAppDocUrl,
+    isCloud9,
+    getLaunchConfigDocUrl,
+} from '../../shared/extensionUtilities'
 import { execFileSync } from 'child_process'
-import { writeFile } from 'fs-extra'
 import { checklogs } from '../../shared/localizedText'
 import globals from '../../shared/extensionGlobals'
 import { telemetry } from '../../shared/telemetry/telemetry'
 import { LambdaArchitecture, Result, Runtime } from '../../shared/telemetry/telemetry'
 import { getTelemetryReason, getTelemetryResult } from '../../shared/errors'
 import { openUrl, replaceVscodeVars } from '../../shared/utilities/vsCodeUtils'
+import { fs } from '../../shared'
 
 export const samInitTemplateFiles: string[] = ['template.yaml', 'template.yml']
 export const samInitReadmeFile: string = 'README.TOOLKIT.md'
@@ -100,7 +104,7 @@ export async function resumeCreateNewSamApp(
         reason = 'error'
 
         globals.outputChannel.show(true)
-        getLogger('channel').error(
+        getLogger().error(
             localize('AWS.samcli.initWizard.resume.error', 'Error resuming SAM Application creation. {0}', checklogs())
         )
 
@@ -235,7 +239,7 @@ export async function createNewSamApplication(
                 destinationDirectory: vscode.Uri.file(destinationDirectory),
             }
             schemaCodeDownloader = createSchemaCodeDownloaderObject(client!, globals.outputChannel)
-            getLogger('channel').info(
+            getLogger().info(
                 localize(
                     'AWS.message.info.schemas.downloadCodeBindings.start',
                     'Downloading code for schema {0}...',
@@ -316,7 +320,7 @@ export async function createNewSamApplication(
                 )
                 .then(async (buttonText) => {
                     if (buttonText === helpText) {
-                        void openUrl(vscode.Uri.parse(launchConfigDocUrl))
+                        void openUrl(getLaunchConfigDocUrl())
                     }
                 })
         }
@@ -333,7 +337,7 @@ export async function createNewSamApplication(
         reason = getTelemetryReason(err)
 
         globals.outputChannel.show(true)
-        getLogger('channel').error(
+        getLogger().error(
             localize('AWS.samcli.initWizard.general.error', 'Error creating new SAM Application. {0}', checklogs())
         )
 
@@ -441,7 +445,7 @@ async function showCompletionNotification(appName: string, configs: string): Pro
     if (action === openJson) {
         await openLaunchJsonFile()
     } else if (action === learnMore) {
-        void openUrl(vscode.Uri.parse(debugNewSamAppUrl))
+        void openUrl(getDebugNewSamAppDocUrl())
     }
 }
 
@@ -472,7 +476,7 @@ export async function writeToolkitReadme(
                     : 'https://docs.aws.amazon.com/toolkit-for-vscode/latest/userguide/serverless-apps.html'
             )
 
-        await writeFile(readmeLocation, readme)
+        await fs.writeFile(readmeLocation, readme)
         getLogger().debug(`writeToolkitReadme: wrote file: %O`, readmeLocation)
 
         return true

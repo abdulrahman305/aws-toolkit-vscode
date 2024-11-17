@@ -11,6 +11,7 @@ import {
     getClientId,
     getUserAgent,
     platformPair,
+    SessionId,
     telemetryClientIdEnvKey,
     TelemetryConfig,
 } from '../../../shared/telemetry/util'
@@ -18,6 +19,7 @@ import { extensionVersion } from '../../../shared/vscode/env'
 import { FakeMemento } from '../../fakeExtensionContext'
 import { GlobalState } from '../../../shared/globalState'
 import { randomUUID } from 'crypto'
+import { isUuid } from '../../../shared/crypto'
 
 describe('TelemetryConfig', function () {
     const settingKey = 'aws.telemetry'
@@ -104,6 +106,23 @@ describe('TelemetryConfig', function () {
                 assert.deepStrictEqual(tryConvert(), scenario.expectedSanitizedValue)
             })
         })
+    })
+})
+
+describe('getSessionId', function () {
+    it('returns a stable UUID', function () {
+        const result = SessionId.getSessionId()
+
+        assert.deepStrictEqual(isUuid(result), true)
+        assert.deepStrictEqual(SessionId.getSessionId(), result, 'Subsequent call did not return the same UUID')
+    })
+
+    it('overwrites something that does not look like a UUID', function () {
+        ;(globalThis as any).amzn_sessionId = 'notAUUID'
+        const result = SessionId.getSessionId()
+
+        assert.deepStrictEqual(isUuid(result), true)
+        assert.deepStrictEqual(SessionId.getSessionId(), result, 'Subsequent call did not return the same UUID')
     })
 })
 

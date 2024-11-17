@@ -133,7 +133,7 @@ You can also use these NPM tasks (see `npm run` for the full list):
     1. Declare a global unhandledRejection handler.
         ```ts
         process.on('unhandledRejection', (e) => {
-            getLogger('channel').error(
+            getLogger().error(
                 localize(
                     'AWS.channel.aws.toolkit.activation.error',
                     'Error Activating {0} Toolkit: {1}',
@@ -188,11 +188,11 @@ To run a single test in VSCode, do any one of:
 
     -   Unix/macOS/POSIX shell:
         ```
-        TEST_FILE=src/test/foo.test.ts npm run test
+        TEST_FILE=../core/src/test/foo.test.ts npm run test
         ```
     -   Powershell:
         ```
-        $Env:TEST_FILE = "src/test/foo.test.ts"; npm run test
+        $Env:TEST_FILE = "../core/src/test/foo.test.ts"; npm run test
         ```
 
 -   To run all tests in a particular subdirectory, you can edit
@@ -209,16 +209,26 @@ To run tests against a specific folder in VSCode, do any one of:
 -   Run in your terminal
     -   Unix/macOS/POSIX shell:
         ```
-        TEST_DIR=src/test/foo npm run test
+        TEST_DIR=../core/src/test/foo npm run test
         ```
     -   Powershell:
         ```
-        $Env:TEST_DIR = "src/test/foo"; npm run test
+        $Env:TEST_DIR = "../core/src/test/foo"; npm run test
         ```
+
+#### Run jscpd ("Copy-Paste Detection")
+
+If the "Copy-Paste Detection" CI job fails, you will find it useful to check things locally. To
+check a specific file:
+
+    npx jscpd --config .github/workflows/jscpd.json --pattern packages/…/src/foo.ts
+
+See the [jscpd cli documentation](https://github.com/kucherenko/jscpd/tree/master/apps/jscpd) for
+more options.
 
 ### Coverage report
 
-You can find the coverage report at `./coverage/amazonq/lcov-report/index.html` and `./coverage/core/lcov-report/index.html` after running the tests. Tests ran from the workspace launch config won't generate a coverage report automatically because it can break file watching.
+You can find the coverage report at `./coverage/amazonq/lcov-report/index.html` and `./coverage/toolkit/lcov-report/index.html` after running the tests. Tests ran from the workspace launch config won't generate a coverage report automatically because it can break file watching.
 
 ### CodeCatalyst Blueprints
 
@@ -279,34 +289,50 @@ user's point of view.
 > -   If there are multiple unrelated changes, run `npm run newChange` for each change.
 > -   Include the feature that the change affects, Q, CodeWhisperer, etc.
 
-### Commit messages
+### Pull request title
 
-Generally your PR description should be a copy-paste of your commit message(s).
-If your PR description provides insight and context, that also should exist in
-the commit message. Source control (Git) is our source-of-truth, not GitHub.
+The title of your pull request must follow this format (checked by [lintcommit.js](.github/workflows/lintcommit.js)):
 
-Follow these [commit message guidelines](https://cbea.ms/git-commit/):
+-   format: `type(scope): subject...`
+-   type: must be a valid type (`build`, `ci`, `config`, `deps`, `docs`, `feat`, `fix`, `perf`, `refactor`, `style`, `telemetry`, `test`, `types`)
+    -   see [lintcommit.js](.github/workflows/lintcommit.js))
+    -   "chore" is intentionally rejected because it tends to be over-used.
+    -   user-facing changes should always choose "feat" or "fix", and include a [changelog](#changelog) item.
+-   scope: lowercase, <30 chars
+-   subject: must be <100 chars
 
--   Subject: single line up to 50-72 characters
-    -   Imperative voice ("Fix bug", not "Fixed"/"Fixes"/"Fixing").
--   Body: for non-trivial or uncommon changes, explain your motivation for the
-    change and contrast your implementation with previous behavior.
-    -   Often you can save a _lot_ of words by using this simple template:
-        ```
-        Problem: …
-        Solution: …
-        ```
+### Pull request description
 
-A [good commit message](https://git-scm.com/book/en/v2/Distributed-Git-Contributing-to-a-Project)
-has a short subject line and unlimited detail in the body.
+Your PR description should provide a brief "Problem" and "Solution" pair. This
+structure often gives much more clarity, more concisely, than a typical
+paragraph of explanation.
+
+    Problem:
+    Foo does nothing when user clicks it.
+
+    Solution:
+    - Listen to the click event.
+    - Emit telemetry on success/failure.
+
 [Good explanations](https://nav.al/explanations) are acts of creativity. The
 "tiny subject line" constraint reminds you to clarify the essence of the
 commit, and makes the log easy for humans to scan. The commit log is an
 artifact that will outlive most code.
 
-Prefix the subject with `type(topic):` ([conventional
-commits](https://www.conventionalcommits.org/) format): this again helps humans
-(and scripts) scan and omit ranges of the history at a glance.
+### Commit messages
+
+Source control (Git) is our source-of-truth, not GitHub. However since most PRs
+are squash-merged, it's most important that your [pull request description](#pull-request-description)
+is well-formed so that the merged commit has the relevant info.
+
+If you expect your commits to be preserved ("regular merge"), then follow [these
+guidelines](https://cbea.ms/git-commit/):
+
+-   Subject: single line up to 50-72 characters
+    -   Imperative voice ("Fix bug", not "Fixed"/"Fixes"/"Fixing").
+    -   [Formatted as `type(scope): subject...`](#pull-request-title).
+        -   Helps humans _and_ scripts scan and omit ranges of the history at a glance.
+-   Body: describe the change as a [Problem/Solution pair](#pull-request-description).
 
 ## Tooling
 
@@ -328,23 +354,37 @@ The `aws.dev.forceDevMode` setting enables or disables Toolkit "dev mode". Witho
 -   Use `getLogger()` to log debugging messages, warnings, etc.
     -   Example: `getLogger().error('topic: widget failed: %O', { foo: 'bar', baz: 42 })`
 -   Log messages are written to the extension Output channel, which you can view in vscode by visiting the "Output" panel and selecting `AWS Toolkit Logs` or `Amazon Q Logs`.
--   While viewing the Output channel (`AWS Toolkit Logs` or `Amazon Q Logs`) in vscode:
-    -   Click the "gear" icon to [select a log level](https://github.com/aws/aws-toolkit-vscode/pull/4859) ("Debug", "Info", "Error", …).
-    -   Click the "..." icon to open the log file.
 -   Use the `aws.dev.logfile` setting to set the logfile path to a fixed location, so you can follow
-    and filter logs using shell tools like `tail` and `grep`. For example in settings.json,
-    ```
-    "aws.dev.logfile": "~/awstoolkit.log",
-    ```
-    then you can tail the logfile in your terminal:
-    ```
-    tail -F ~/awstoolkit.log
-    ```
+    and filter logs using shell tools like `tail` and `grep`.
+    -   Note: this always logs at **debug log-level** (though you can temporarily override that from the `AWS Toolkit Logs` UI).
+    -   Example `settings.json`:
+        ```
+        "aws.dev.logfile": "~/awstoolkit.log",
+        ```
+        then you can tail the logfile in your terminal:
+        ```
+        tail -F ~/awstoolkit.log
+        ```
 -   Use the `AWS (Developer): Watch Logs` command to watch and filter Toolkit logs (including
     telemetry) in VSCode.
     -   Only available if you enabled "dev mode" (`aws.dev.forceDevMode` setting, see above).
     -   Enter text in the Debug Console filter box to show only log messages with that text. <br/>
         <img src="./docs/images/debug-console-filter.png" alt="VSCode Debug Console" width="320"/>
+
+#### Enabling Debug Logs
+
+How to enable more detailed debug logs in the extensions.
+If you need to report an issue attach these to give the most detailed information.
+
+1. Open the Command Palette (`cmd/ctrl` + `shift` + `p`), then search for "View Logs". Choose the correct option for the extension you want, eg: `AWS: View Logs` or `Amazon Q: View Logs`
+   ![](./docs/images/logsView.png)
+2. Click the gear icon on the bottom right and select `Debug`
+   ![](./docs/images/logsSetDebug.png)
+3. Click the gear icon again and select `Set As Default`. This will ensure we stay in `Debug` until explicitly changed
+   ![](./docs/images/logsSetDefault.png)
+4. Open the Command Palette again and select `Reload Window`.
+5. Now you should see additional `[debug]` prefixed logs in the output.
+   ![](./docs/images/logsDebugLog.png)
 
 ### Telemetry
 

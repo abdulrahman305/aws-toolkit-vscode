@@ -33,7 +33,7 @@ export class GitIgnoreFilter {
     public static async build(gitIgnoreFiles: vscode.Uri[]): Promise<GitIgnoreFilter> {
         const acceptors: GitIgnoreRelativeAcceptor[] = []
         for (const file of gitIgnoreFiles) {
-            const fileContent = await fs.readFileAsString(file)
+            const fileContent = await fs.readFileText(file)
 
             const folderPath = getWorkspaceParentDirectory(file.fsPath)
             if (folderPath === undefined) {
@@ -66,6 +66,11 @@ export class GitIgnoreFilter {
 }
 
 export type CurrentWsFolders = [vscode.WorkspaceFolder, ...vscode.WorkspaceFolder[]]
+
+export function hasWorkspace() {
+    const wsFolders = vscode.workspace.workspaceFolders
+    return wsFolders !== undefined && wsFolders.length > 0
+}
 
 /**
  * Resolves `relPath` against parent `workspaceFolder`, or returns `relPath` if
@@ -346,6 +351,7 @@ export async function collectFiles(
             new vscode.RelativePattern(rootPath, '**'),
             getExcludePattern()
         )
+
         const files = respectGitIgnore ? await filterOutGitignoredFiles(rootPath, allFiles) : allFiles
 
         for (const file of files) {
@@ -384,7 +390,7 @@ export async function collectFiles(
 
 const readFile = async (file: vscode.Uri) => {
     try {
-        const fileContent = await fs.readFileAsString(file, new TextDecoder('utf8', { fatal: false }))
+        const fileContent = await fs.readFileText(file, new TextDecoder('utf8', { fatal: false }))
         return fileContent
     } catch (error) {
         getLogger().debug(
@@ -547,7 +553,7 @@ export async function collectFilesForIndex(
 
     const isLanguageSupported = (filename: string) => {
         const k =
-            /\.(js|ts|java|py|rb|cpp|tsx|jsx|cc|c|h|html|json|css|md|php|swift|rs|scala|yaml|tf|sql|sh|go|yml|kt|smithy|config|kts|gradle|cfg|xml|vue)$/i
+            /\.(js|ts|java|py|rb|cpp|tsx|jsx|cc|c|cs|vb|pl|r|m|hs|mts|mjs|h|clj|dart|groovy|lua|rb|jl|ipynb|html|json|css|md|php|swift|rs|scala|yaml|tf|sql|sh|go|yml|kt|smithy|config|kts|gradle|cfg|xml|vue)$/i
         return k.test(filename) || filename.endsWith('Config')
     }
 
@@ -576,7 +582,7 @@ export async function collectFilesForIndex(
                 continue
             }
 
-            const fileStat = await vscode.workspace.fs.stat(file)
+            const fileStat = await fs.stat(file)
             // ignore single file over 10 MB
             if (fileStat.size > 10 * 1024 * 1024) {
                 continue

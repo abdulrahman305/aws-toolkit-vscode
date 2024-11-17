@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import * as vscode from 'vscode'
-import * as fs from 'fs-extra'
+import * as nodefs from 'fs' // eslint-disable-line no-restricted-imports
 import * as path from 'path'
 import * as os from 'os'
 import * as codeWhisperer from '../../client/codewhisperer'
@@ -16,6 +16,7 @@ import {
     jobPlanProgress,
     sessionJobHistory,
     StepProgress,
+    TransformationType,
     transformByQState,
     TransformByQStatus,
     TransformByQStoppedError,
@@ -44,9 +45,10 @@ import { AuthUtil } from '../../util/authUtil'
 import { createCodeWhispererChatStreamingClient } from '../../../shared/clients/codewhispererChatClient'
 import { downloadExportResultArchive } from '../../../shared/utilities/download'
 import { ExportIntent, TransformationDownloadArtifactType } from '@amzn/codewhisperer-streaming'
-import fs2 from '../../../shared/fs/fs'
+import fs from '../../../shared/fs/fs'
 import { ChatSessionManager } from '../../../amazonqGumby/chat/storages/chatSession'
-import { convertToTimeString, encodeHTML } from '../../../shared/utilities/textUtilities'
+import { encodeHTML } from '../../../shared/utilities/textUtilities'
+import { convertToTimeString } from '../../../shared/datetime'
 
 export function getSha256(buffer: Buffer) {
     const hasher = crypto.createHash('sha256')
@@ -109,7 +111,7 @@ export async function uploadArtifactToS3(
 ) {
     throwIfCancelled()
     try {
-        const uploadFileByteSize = (await fs.promises.stat(fileName)).size
+        const uploadFileByteSize = (await nodefs.promises.stat(fileName)).size
         getLogger().info(
             `Uploading project artifact at %s with checksum %s using uploadId: %s and size %s kB`,
             fileName,
@@ -118,20 +120,10 @@ export async function uploadArtifactToS3(
             Math.round(uploadFileByteSize / 1000)
         )
 
-        const apiStartTime = globals.clock.Date.now()
         const response = await request.fetch('PUT', resp.uploadUrl, {
             body: buffer,
             headers: getHeadersObj(sha256, resp.kmsKeyArn),
         }).response
-        // TODO: remove deprecated metric once BI started using new metrics
-        telemetry.codeTransform_logApiLatency.emit({
-            codeTransformApiNames: 'UploadZip',
-            codeTransformSessionId: CodeTransformTelemetryState.instance.getSessionId(),
-            codeTransformUploadId: resp.uploadId,
-            codeTransformRunTimeLatency: calculateTotalLatency(apiStartTime),
-            codeTransformTotalByteSize: uploadFileByteSize,
-            result: MetadataResult.Pass,
-        })
         getLogger().info(`CodeTransformation: Status from S3 Upload = ${response.status}`)
     } catch (e: any) {
         let errorMessage = `The upload failed due to: ${(e as Error).message}. For more information, see the [Amazon Q documentation](${CodeWhispererConstants.codeTransformTroubleshootUploadError})`
@@ -149,21 +141,11 @@ export async function uploadArtifactToS3(
 
 export async function resumeTransformationJob(jobId: string, userActionStatus: TransformationUserActionStatus) {
     try {
-        const apiStartTime = globals.clock.Date.now()
         const response = await codeWhisperer.codeWhispererClient.codeModernizerResumeTransformation({
             transformationJobId: jobId,
             userActionStatus, // can be "COMPLETED" or "REJECTED"
         })
         if (response) {
-            // TODO: remove deprecated metric once BI started using new metrics
-            telemetry.codeTransform_logApiLatency.emit({
-                codeTransformApiNames: 'ResumeTransformation',
-                codeTransformSessionId: CodeTransformTelemetryState.instance.getSessionId(),
-                codeTransformJobId: jobId,
-                codeTransformRunTimeLatency: calculateTotalLatency(apiStartTime),
-                codeTransformRequestId: response.$response.requestId,
-                result: MetadataResult.Pass,
-            })
             // always store request ID, but it will only show up in a notification if an error occurs
             return response.transformationStatus
         }
@@ -180,20 +162,10 @@ export async function stopJob(jobId: string) {
     }
 
     try {
-        const apiStartTime = globals.clock.Date.now()
         const response = await codeWhisperer.codeWhispererClient.codeModernizerStopCodeTransformation({
             transformationJobId: jobId,
         })
         if (response !== undefined) {
-            // TODO: remove deprecated metric once BI started using new metrics
-            telemetry.codeTransform_logApiLatency.emit({
-                codeTransformApiNames: 'StopTransformation',
-                codeTransformSessionId: CodeTransformTelemetryState.instance.getSessionId(),
-                codeTransformJobId: jobId,
-                codeTransformRunTimeLatency: calculateTotalLatency(apiStartTime),
-                codeTransformRequestId: response.$response.requestId,
-                result: MetadataResult.Pass,
-            })
             // always store request ID, but it will only show up in a notification if an error occurs
             if (response.$response.requestId) {
                 transformByQState.setJobFailureMetadata(` (request ID: ${response.$response.requestId})`)
@@ -207,13 +179,12 @@ export async function stopJob(jobId: string) {
 }
 
 export async function uploadPayload(payloadFileName: string, uploadContext?: UploadContext) {
-    const buffer = fs.readFileSync(payloadFileName)
+    const buffer = Buffer.from(await fs.readFileBytes(payloadFileName))
     const sha256 = getSha256(buffer)
 
     throwIfCancelled()
     let response = undefined
     try {
-        const apiStartTime = globals.clock.Date.now()
         response = await codeWhisperer.codeWhispererClient.createUploadUrl({
             contentChecksum: sha256,
             contentChecksumType: CodeWhispererConstants.contentChecksumType,
@@ -223,15 +194,6 @@ export async function uploadPayload(payloadFileName: string, uploadContext?: Upl
         if (response.$response.requestId) {
             transformByQState.setJobFailureMetadata(` (request ID: ${response.$response.requestId})`)
         }
-        // TODO: remove deprecated metric once BI started using new metrics
-        telemetry.codeTransform_logApiLatency.emit({
-            codeTransformApiNames: 'CreateUploadUrl',
-            codeTransformSessionId: CodeTransformTelemetryState.instance.getSessionId(),
-            codeTransformRunTimeLatency: calculateTotalLatency(apiStartTime),
-            codeTransformUploadId: response.uploadId,
-            codeTransformRequestId: response.$response.requestId,
-            result: MetadataResult.Pass,
-        })
     } catch (e: any) {
         const errorMessage = `The upload failed due to: ${(e as Error).message}`
         getLogger().error(`CodeTransformation: CreateUploadUrl error: = ${e}`)
@@ -252,6 +214,11 @@ export async function uploadPayload(payloadFileName: string, uploadContext?: Upl
         transformByQState.setJobId(encodeHTML(response.uploadId))
     }
     jobPlanProgress['uploadCode'] = StepProgress.Succeeded
+    if (transformByQState.getTransformationType() === TransformationType.SQL_CONVERSION) {
+        // if doing a SQL conversion, we don't build the code or generate a plan, so mark these steps as succeeded immediately so that next step renders
+        jobPlanProgress['buildCode'] = StepProgress.Succeeded
+        jobPlanProgress['generatePlan'] = StepProgress.Succeeded
+    }
     updateJobHistory()
     return response.uploadId
 }
@@ -289,7 +256,7 @@ function isExcludedDependencyFile(path: string): boolean {
  * getFilesRecursively on the source code folder.
  */
 function getFilesRecursively(dir: string, isDependenciesFolder: boolean): string[] {
-    const entries = fs.readdirSync(dir, { withFileTypes: true })
+    const entries = nodefs.readdirSync(dir, { withFileTypes: true })
     const files = entries.flatMap((entry) => {
         const res = path.resolve(dir, entry.name)
         // exclude 'target' directory from ZIP (except if zipping dependencies) due to issues in backend
@@ -315,9 +282,9 @@ export function createZipManifest({ hilZipParams }: IZipManifestParams) {
 }
 
 interface IZipCodeParams {
-    dependenciesFolder: FolderInfo
+    dependenciesFolder?: FolderInfo
     humanInTheLoopFlag?: boolean
-    modulePath?: string
+    projectPath?: string
     zipManifest: ZipManifest | HilZipManifest
 }
 
@@ -327,42 +294,68 @@ interface ZipCodeResult {
     fileSize: number
 }
 
-export async function zipCode({ dependenciesFolder, humanInTheLoopFlag, modulePath, zipManifest }: IZipCodeParams) {
+export async function zipCode(
+    { dependenciesFolder, humanInTheLoopFlag, projectPath, zipManifest }: IZipCodeParams,
+    zip: AdmZip = new AdmZip()
+) {
     let tempFilePath = undefined
-    let zipStartTime = undefined
     let logFilePath = undefined
     let dependenciesCopied = false
     try {
         throwIfCancelled()
-        zipStartTime = globals.clock.Date.now()
-        const zip = new AdmZip()
 
-        // If no modulePath is passed in, we are not uploaded the source folder
-        // NOTE: We only upload dependencies for human in the loop work
-        if (modulePath) {
-            const sourceFiles = getFilesRecursively(modulePath, false)
+        // if no project Path is passed in, we are not uploaded the source folder
+        // we only upload dependencies for human in the loop work
+        if (projectPath) {
+            const sourceFiles = getFilesRecursively(projectPath, false)
             let sourceFilesSize = 0
             for (const file of sourceFiles) {
-                if ((await fs.stat(file)).isDirectory()) {
+                if (nodefs.statSync(file).isDirectory()) {
                     getLogger().info('CodeTransformation: Skipping directory, likely a symlink')
                     continue
                 }
-                const relativePath = path.relative(modulePath, file)
+                const relativePath = path.relative(projectPath, file)
                 const paddedPath = path.join('sources', relativePath)
                 zip.addLocalFile(file, path.dirname(paddedPath))
-                sourceFilesSize += (await fs.promises.stat(file)).size
+                sourceFilesSize += (await nodefs.promises.stat(file)).size
             }
             getLogger().info(`CodeTransformation: source code files size = ${sourceFilesSize}`)
+        }
+
+        if (
+            transformByQState.getTransformationType() === TransformationType.SQL_CONVERSION &&
+            zipManifest instanceof ZipManifest
+        ) {
+            // note that zipManifest must be a ZipManifest since only other option is HilZipManifest which is not used for SQL conversions
+            const metadataZip = new AdmZip(transformByQState.getMetadataPathSQL())
+            zipManifest.requestedConversions = {
+                sqlConversion: {
+                    source: transformByQState.getSourceDB(),
+                    target: transformByQState.getTargetDB(),
+                    schema: transformByQState.getSchema(),
+                    host: transformByQState.getSourceServerName(),
+                    sctFileName: metadataZip.getEntries().filter((entry) => entry.entryName.endsWith('.sct'))[0]
+                        .entryName,
+                },
+            }
+            // TO-DO: later consider making this add to path.join(zipManifest.dependenciesRoot, 'qct-sct-metadata', entry.entryName) so that it's more organized
+            metadataZip
+                .getEntries()
+                .forEach((entry) =>
+                    zip.addFile(path.join(zipManifest.dependenciesRoot, entry.entryName), entry.getData())
+                )
+            const sqlMetadataSize = (await nodefs.promises.stat(transformByQState.getMetadataPathSQL())).size
+            getLogger().info(`CodeTransformation: SQL metadata file size = ${sqlMetadataSize}`)
         }
 
         throwIfCancelled()
 
         let dependencyFiles: string[] = []
-        if (fs.existsSync(dependenciesFolder.path)) {
+        if (dependenciesFolder && (await fs.exists(dependenciesFolder.path))) {
             dependencyFiles = getFilesRecursively(dependenciesFolder.path, true)
         }
 
-        if (dependencyFiles.length > 0) {
+        if (dependenciesFolder && dependencyFiles.length > 0) {
             let dependencyFilesSize = 0
             for (const file of dependencyFiles) {
                 if (isExcludedDependencyFile(file)) {
@@ -372,19 +365,10 @@ export async function zipCode({ dependenciesFolder, humanInTheLoopFlag, modulePa
                 // const paddedPath = path.join(`dependencies/${dependenciesFolder.name}`, relativePath)
                 const paddedPath = path.join(`dependencies/`, relativePath)
                 zip.addLocalFile(file, path.dirname(paddedPath))
-                dependencyFilesSize += (await fs.promises.stat(file)).size
+                dependencyFilesSize += (await nodefs.promises.stat(file)).size
             }
             getLogger().info(`CodeTransformation: dependency files size = ${dependencyFilesSize}`)
-            // TODO: remove deprecated metric once BI started using new metrics
-            telemetry.codeTransform_dependenciesCopied.emit({
-                codeTransformSessionId: CodeTransformTelemetryState.instance.getSessionId(),
-                result: MetadataResult.Pass,
-            })
             dependenciesCopied = true
-        } else {
-            if (zipManifest instanceof ZipManifest) {
-                zipManifest.dependenciesRoot = undefined
-            }
         }
 
         zip.addFile('manifest.json', Buffer.from(JSON.stringify(zipManifest)), 'utf-8')
@@ -400,34 +384,22 @@ export async function zipCode({ dependenciesFolder, humanInTheLoopFlag, modulePa
         }
 
         tempFilePath = path.join(os.tmpdir(), 'zipped-code.zip')
-        fs.writeFileSync(tempFilePath, zip.toBuffer())
-        if (fs.existsSync(dependenciesFolder.path)) {
-            fs.rmSync(dependenciesFolder.path, { recursive: true, force: true })
+        await fs.writeFile(tempFilePath, zip.toBuffer())
+        if (dependenciesFolder && (await fs.exists(dependenciesFolder.path))) {
+            await fs.delete(dependenciesFolder.path, { recursive: true, force: true })
         }
     } catch (e: any) {
-        telemetry.codeTransform_logGeneralError.emit({
-            codeTransformSessionId: CodeTransformTelemetryState.instance.getSessionId(),
-            result: MetadataResult.Fail,
-            reason: 'ZipCreationFailed',
-        })
+        getLogger().error(`CodeTransformation: zipCode error = ${e}`)
         throw Error('Failed to zip project')
     } finally {
         if (logFilePath) {
-            fs.rmSync(logFilePath)
+            await fs.delete(logFilePath)
         }
     }
 
-    const zipSize = (await fs.promises.stat(tempFilePath)).size
+    const zipSize = (await nodefs.promises.stat(tempFilePath)).size
 
     const exceedsLimit = zipSize > CodeWhispererConstants.uploadZipSizeLimitInBytes
-
-    // TODO: remove deprecated metric once BI started using new metrics
-    telemetry.codeTransform_jobCreateZipEndTime.emit({
-        codeTransformSessionId: CodeTransformTelemetryState.instance.getSessionId(),
-        codeTransformTotalByteSize: zipSize,
-        codeTransformRunTimeLatency: calculateTotalLatency(zipStartTime),
-        result: exceedsLimit ? MetadataResult.Fail : MetadataResult.Pass,
-    })
 
     getLogger().info(`CodeTransformation: created ZIP of size ${zipSize} at ${tempFilePath}`)
 
@@ -446,30 +418,20 @@ export async function startJob(uploadId: string) {
     const sourceLanguageVersion = `JAVA_${transformByQState.getSourceJDKVersion()}`
     const targetLanguageVersion = `JAVA_${transformByQState.getTargetJDKVersion()}`
     try {
-        const apiStartTime = globals.clock.Date.now()
         const response = await codeWhisperer.codeWhispererClient.codeModernizerStartCodeTransformation({
             workspaceState: {
                 uploadId: uploadId,
                 programmingLanguage: { languageName: CodeWhispererConstants.defaultLanguage.toLowerCase() },
             },
             transformationSpec: {
-                transformationType: CodeWhispererConstants.transformationType,
-                source: { language: sourceLanguageVersion },
-                target: { language: targetLanguageVersion },
+                transformationType: CodeWhispererConstants.transformationType, // shared b/w language upgrades & sql conversions for now
+                source: { language: sourceLanguageVersion }, // dummy value of JDK8 used for SQL conversions just so that this API can be called
+                target: { language: targetLanguageVersion }, // always JDK17
             },
         })
         if (response.$response.requestId) {
             transformByQState.setJobFailureMetadata(` (request ID: ${response.$response.requestId})`)
         }
-        // TODO: remove deprecated metric once BI started using new metrics
-        telemetry.codeTransform_logApiLatency.emit({
-            codeTransformApiNames: 'StartTransformation',
-            codeTransformSessionId: CodeTransformTelemetryState.instance.getSessionId(),
-            codeTransformRunTimeLatency: calculateTotalLatency(apiStartTime),
-            codeTransformJobId: response.transformationJobId,
-            codeTransformRequestId: response.$response.requestId,
-            result: MetadataResult.Pass,
-        })
         return response.transformationJobId
     } catch (e: any) {
         const errorMessage = `Starting the job failed due to: ${(e as Error).message}`
@@ -479,7 +441,7 @@ export async function startJob(uploadId: string) {
 }
 
 export function getImageAsBase64(filePath: string) {
-    const fileContents = fs.readFileSync(filePath, { encoding: 'base64' })
+    const fileContents = nodefs.readFileSync(filePath, { encoding: 'base64' })
     return `data:image/svg+xml;base64,${fileContents}`
 }
 
@@ -586,19 +548,9 @@ export async function getTransformationPlan(jobId: string) {
         response = await codeWhisperer.codeWhispererClient.codeModernizerGetCodeTransformationPlan({
             transformationJobId: jobId,
         })
-        const apiStartTime = globals.clock.Date.now()
         if (response.$response.requestId) {
             transformByQState.setJobFailureMetadata(` (request ID: ${response.$response.requestId})`)
         }
-        // TODO: remove deprecated metric once BI started using new metrics
-        telemetry.codeTransform_logApiLatency.emit({
-            codeTransformApiNames: 'GetTransformationPlan',
-            codeTransformSessionId: CodeTransformTelemetryState.instance.getSessionId(),
-            codeTransformJobId: jobId,
-            codeTransformRunTimeLatency: calculateTotalLatency(apiStartTime),
-            codeTransformRequestId: response.$response.requestId,
-            result: MetadataResult.Pass,
-        })
 
         const stepZeroProgressUpdates = response.transformationPlan.transformationSteps[0].progressUpdates
 
@@ -622,6 +574,7 @@ export async function getTransformationPlan(jobId: string) {
         const linesOfCode = Number(
             jobStatistics.find((stat: { name: string; value: string }) => stat.name === 'linesOfCode').value
         )
+        transformByQState.setLinesOfCodeSubmitted(linesOfCode)
         if (authType === 'iamIdentityCenter' && linesOfCode > CodeWhispererConstants.codeTransformLocThreshold) {
             plan += CodeWhispererConstants.codeTransformBillingText(linesOfCode)
         }
@@ -657,22 +610,12 @@ export async function getTransformationSteps(jobId: string, handleThrottleFlag: 
         if (handleThrottleFlag) {
             await sleep(2000)
         }
-        const apiStartTime = globals.clock.Date.now()
         const response = await codeWhisperer.codeWhispererClient.codeModernizerGetCodeTransformationPlan({
             transformationJobId: jobId,
         })
         if (response.$response.requestId) {
             transformByQState.setJobFailureMetadata(` (request ID: ${response.$response.requestId})`)
         }
-        // TODO: remove deprecated metric once BI started using new metrics
-        telemetry.codeTransform_logApiLatency.emit({
-            codeTransformApiNames: 'GetTransformationPlan',
-            codeTransformSessionId: CodeTransformTelemetryState.instance.getSessionId(),
-            codeTransformJobId: jobId,
-            codeTransformRunTimeLatency: calculateTotalLatency(apiStartTime),
-            codeTransformRequestId: response.$response.requestId,
-            result: MetadataResult.Pass,
-        })
         return response.transformationPlan.transformationSteps.slice(1) // skip step 0 (contains supplemental info)
     } catch (e: any) {
         const errorMessage = (e as Error).message
@@ -687,18 +630,8 @@ export async function pollTransformationJob(jobId: string, validStates: string[]
     while (true) {
         throwIfCancelled()
         try {
-            const apiStartTime = globals.clock.Date.now()
             const response = await codeWhisperer.codeWhispererClient.codeModernizerGetCodeTransformation({
                 transformationJobId: jobId,
-            })
-            // TODO: remove deprecated metric once BI started using new metrics
-            telemetry.codeTransform_logApiLatency.emit({
-                codeTransformApiNames: 'GetTransformation',
-                codeTransformSessionId: CodeTransformTelemetryState.instance.getSessionId(),
-                codeTransformJobId: jobId,
-                codeTransformRunTimeLatency: calculateTotalLatency(apiStartTime),
-                codeTransformRequestId: response.$response.requestId,
-                result: MetadataResult.Pass,
             })
             status = response.transformationJob.status!
             if (CodeWhispererConstants.validStatesForBuildSucceeded.includes(status)) {
@@ -825,9 +758,9 @@ export async function downloadAndExtractResultArchive(
     pathToArchiveDir: string,
     downloadArtifactType: TransformationDownloadArtifactType
 ) {
-    const archivePathExists = await fs2.existsDir(pathToArchiveDir)
+    const archivePathExists = await fs.existsDir(pathToArchiveDir)
     if (!archivePathExists) {
-        await fs2.mkdir(pathToArchiveDir)
+        await fs.mkdir(pathToArchiveDir)
     }
 
     const pathToArchive = path.join(pathToArchiveDir, 'ExportResultsArchive.zip')

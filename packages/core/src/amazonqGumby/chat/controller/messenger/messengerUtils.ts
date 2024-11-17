@@ -13,8 +13,12 @@ import DependencyVersions from '../../../models/dependencies'
 export enum ButtonActions {
     STOP_TRANSFORMATION_JOB = 'gumbyStopTransformationJob',
     VIEW_TRANSFORMATION_HUB = 'gumbyViewTransformationHub',
-    CONFIRM_TRANSFORMATION_FORM = 'gumbyTransformFormConfirm',
-    CANCEL_TRANSFORMATION_FORM = 'gumbyTransformFormCancel',
+    CONFIRM_LANGUAGE_UPGRADE_TRANSFORMATION_FORM = 'gumbyLanguageUpgradeTransformFormConfirm',
+    CONFIRM_SQL_CONVERSION_TRANSFORMATION_FORM = 'gumbySQLConversionTransformFormConfirm',
+    CANCEL_TRANSFORMATION_FORM = 'gumbyTransformFormCancel', // shared between Language Upgrade & SQL Conversion
+    CONFIRM_SKIP_TESTS_FORM = 'gumbyTransformSkipTestsFormConfirm',
+    CANCEL_SKIP_TESTS_FORM = 'gumbyTransformSkipTestsFormCancel',
+    SELECT_SQL_CONVERSION_METADATA_FILE = 'gumbySQLConversionMetadataTransformFormConfirm',
     CONFIRM_DEPENDENCY_FORM = 'gumbyTransformDependencyFormConfirm',
     CANCEL_DEPENDENCY_FORM = 'gumbyTransformDependencyFormCancel',
     CONFIRM_JAVA_HOME_FORM = 'gumbyJavaHomeFormConfirm',
@@ -36,17 +40,18 @@ export default class MessengerUtils {
             CodeWhispererConstants.enterJavaHomeChatMessage
         } ${transformByQState.getSourceJDKVersion()}. \n`
         if (os.platform() === 'win32') {
-            javaHomePrompt += CodeWhispererConstants.windowsJavaHomeHelpChatMessage.replace(
-                'JAVA_VERSION_HERE',
-                transformByQState.getSourceJDKVersion()!
-            )
-        } else {
+            javaHomePrompt += CodeWhispererConstants.windowsJavaHomeHelpChatMessage
+        } else if (os.platform() === 'darwin') {
             const jdkVersion = transformByQState.getSourceJDKVersion()
             if (jdkVersion === JDKVersion.JDK8) {
-                javaHomePrompt += ` ${CodeWhispererConstants.nonWindowsJava8HomeHelpChatMessage}`
+                javaHomePrompt += ` ${CodeWhispererConstants.macJavaVersionHomeHelpChatMessage(1.8)}`
             } else if (jdkVersion === JDKVersion.JDK11) {
-                javaHomePrompt += ` ${CodeWhispererConstants.nonWindowsJava11HomeHelpChatMessage}`
+                javaHomePrompt += ` ${CodeWhispererConstants.macJavaVersionHomeHelpChatMessage(11)}`
+            } else if (jdkVersion === JDKVersion.JDK17) {
+                javaHomePrompt += ` ${CodeWhispererConstants.macJavaVersionHomeHelpChatMessage(17)}`
             }
+        } else {
+            javaHomePrompt += ` ${CodeWhispererConstants.linuxJavaHomeHelpChatMessage}`
         }
         return javaHomePrompt
     }
@@ -62,7 +67,7 @@ export default class MessengerUtils {
         }
     }
 
-    static createTransformationConfirmationPrompt = (detectedJavaVersions: Array<JDKVersion | undefined>): string => {
+    static createLanguageUpgradeConfirmationPrompt = (detectedJavaVersions: Array<JDKVersion | undefined>): string => {
         let javaVersionString = 'Java project'
         const uniqueJavaOptions = new Set(detectedJavaVersions)
 

@@ -36,7 +36,9 @@ export const toolkitSettings = {
         "createCredentialsProfile": {},
         "samcliConfirmDevStack": {},
         "remoteConnected": {},
-        "codeCatalystConnectionExpired": {}
+        "codeCatalystConnectionExpired": {},
+        "minIdeVersion": {},
+        "ssoCacheError": {}
     },
     "aws.experiments": {
         "jsonResourceModification": {}

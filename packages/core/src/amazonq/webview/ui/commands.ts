@@ -16,6 +16,8 @@ type MessageCommand =
     | 'open-diff'
     | 'code_was_copied_to_clipboard'
     | 'insert_code_at_cursor_position'
+    | 'accept_diff'
+    | 'view_diff'
     | 'stop-response'
     | 'trigger-tabID-received'
     | 'clear'
@@ -31,5 +33,8 @@ type MessageCommand =
     | 'file-click'
     | 'form-action-click'
     | 'open-settings'
+    | 'start-chat-message-telemetry'
+    | 'stop-chat-message-telemetry'
+    | 'store-code-result-message-id'
 
 export type ExtensionMessage = Record<string, any> & { command: MessageCommand }
