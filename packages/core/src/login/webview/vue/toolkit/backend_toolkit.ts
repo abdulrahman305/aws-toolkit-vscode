@@ -5,7 +5,7 @@
 
 import * as vscode from 'vscode'
 import { tryAddCredentials } from '../../../../auth/utils'
-import { getLogger } from '../../../../shared/logger'
+import { getLogger } from '../../../../shared/logger/logger'
 import { CommonAuthWebview } from '../backend'
 import {
     AwsConnection,
@@ -19,8 +19,11 @@ import {
 import { Auth } from '../../../../auth/auth'
 import { CodeCatalystAuthenticationProvider } from '../../../../codecatalyst/auth'
 import { AuthError, AuthFlowState } from '../types'
-import { setContext } from '../../../../shared'
+import { setContext } from '../../../../shared/vscode/setContext'
 import { builderIdStartUrl } from '../../../../auth/sso/constants'
+import { RegionProfile } from '../../../../codewhisperer/models/model'
+import { ProfileSwitchIntent } from '../../../../codewhisperer/region/regionProfileManager'
+import globals from '../../../../shared/extensionGlobals'
 
 export class ToolkitLoginWebview extends CommonAuthWebview {
     public override id: string = 'aws.toolkit.AmazonCommonAuth'
@@ -44,6 +47,10 @@ export class ToolkitLoginWebview extends CommonAuthWebview {
             credentialStartUrl: startUrl,
             isReAuth: false,
         }
+        await globals.globalState.update('recentSso', {
+            startUrl: startUrl,
+            region: region,
+        })
 
         if (this.isCodeCatalystLogin) {
             return this.ssoSetup('startCodeCatalystSSOSetup', async () => {
@@ -134,7 +141,7 @@ export class ToolkitLoginWebview extends CommonAuthWebview {
      */
     async fetchConnections(): Promise<AwsConnection[] | undefined> {
         const connections: AwsConnection[] = []
-        Auth.instance.declaredConnections.forEach((conn) => {
+        for (const conn of Auth.instance.declaredConnections) {
             // No need to display Builder ID as an existing connection,
             // users can just select the Builder ID login option and it would have the same effect.
             if (conn.startUrl !== builderIdStartUrl) {
@@ -143,7 +150,7 @@ export class ToolkitLoginWebview extends CommonAuthWebview {
                     startUrl: conn.startUrl,
                 } as AwsConnection)
             }
-        })
+        }
         return connections
     }
 
@@ -175,5 +182,13 @@ export class ToolkitLoginWebview extends CommonAuthWebview {
     async quitLoginScreen() {
         await setContext('aws.explorer.showAuthView', false)
         await this.showResourceExplorer()
+    }
+
+    override listRegionProfiles(): Promise<RegionProfile[] | string> {
+        throw new Error('Method not implemented')
+    }
+
+    override selectRegionProfile(profile: RegionProfile, source: ProfileSwitchIntent): Promise<void> {
+        throw new Error('Method not implemented')
     }
 }

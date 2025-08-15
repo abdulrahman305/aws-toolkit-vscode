@@ -40,7 +40,7 @@ async function setup(numberOfFiles: number, fileSize: number): Promise<SetupResu
 function performanceTestWrapper(numberOfFiles: number, fileSize: number) {
     return performanceTest(
         getEqualOSTestOptions({
-            userCpuUsage: 200,
+            userCpuUsage: 350,
             systemCpuUsage: 50,
             heapTotal: 4,
         }),
@@ -54,7 +54,6 @@ function performanceTestWrapper(numberOfFiles: number, fileSize: number) {
                             path: setup.tempDir,
                             name: setup.tempFileName,
                         },
-                        humanInTheLoopFlag: false,
                         projectPath: setup.tempDir,
                         zipManifest: setup.transformQManifest,
                     })

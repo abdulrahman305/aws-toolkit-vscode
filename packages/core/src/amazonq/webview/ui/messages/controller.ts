@@ -8,36 +8,45 @@ import { Connector } from '../connector'
 import { TabType, TabsStorage } from '../storages/tabsStorage'
 import { TabDataGenerator } from '../tabs/generator'
 import { uiComponentsTexts } from '../texts/constants'
+import { MynahUIRef } from '../../../commons/types'
 
 export interface MessageControllerProps {
-    mynahUI: MynahUI
+    mynahUIRef: MynahUIRef
     connector: Connector
     tabsStorage: TabsStorage
-    isFeatureDevEnabled: boolean
     isGumbyEnabled: boolean
+    isScanEnabled: boolean
     disabledCommands?: string[]
 }
 
 export class MessageController {
-    private mynahUI: MynahUI
+    private mynahUIRef: MynahUIRef
     private connector: Connector
     private tabsStorage: TabsStorage
     private tabDataGenerator: TabDataGenerator
 
     constructor(props: MessageControllerProps) {
-        this.mynahUI = props.mynahUI
+        this.mynahUIRef = props.mynahUIRef
         this.connector = props.connector
         this.tabsStorage = props.tabsStorage
         this.tabDataGenerator = new TabDataGenerator({
-            isFeatureDevEnabled: props.isFeatureDevEnabled,
             isGumbyEnabled: props.isGumbyEnabled,
+            isScanEnabled: props.isScanEnabled,
             disabledCommands: props.disabledCommands,
         })
     }
 
     public sendSelectedCodeToTab(message: ChatItem, command: string = ''): string | undefined {
         const selectedTab = { ...this.tabsStorage.getSelectedTab() }
-        if (selectedTab?.id === undefined || selectedTab?.type === 'featuredev') {
+        if (!this.mynahUI) {
+            return
+        }
+
+        if (
+            selectedTab?.id === undefined ||
+            selectedTab?.type === undefined ||
+            ['featuredev', 'gumby', 'review', 'testgen', 'doc'].includes(selectedTab.type)
+        ) {
             // Create a new tab if there's none
             const newTabID: string | undefined = this.mynahUI.updateStore(
                 '',
@@ -66,6 +75,9 @@ export class MessageController {
 
     public sendMessageToTab(message: ChatItem, tabType: TabType, command: string = ''): string | undefined {
         const selectedTab = this.tabsStorage.getSelectedTab()
+        if (!this.mynahUI) {
+            return
+        }
 
         if (
             selectedTab !== undefined &&
@@ -130,5 +142,9 @@ export class MessageController {
 
             return newTabID
         }
+    }
+
+    private get mynahUI(): MynahUI | undefined {
+        return this.mynahUIRef.mynahUI
     }
 }

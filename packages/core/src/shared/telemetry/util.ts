@@ -6,29 +6,31 @@
 import * as vscode from 'vscode'
 import { env, version } from 'vscode'
 import * as os from 'os'
-import { getLogger } from '../logger'
-import { fromExtensionManifest, migrateSetting, Settings } from '../settings'
-import { memoize, once } from '../utilities/functionUtils'
+import { getLogger } from '../logger/logger'
+import { fromExtensionManifest, Settings } from '../settings'
+import { memoize, once, oncePerUniqueArg } from '../utilities/functionUtils'
 import {
     isInDevEnv,
     extensionVersion,
     isAutomation,
     isRemoteWorkspace,
     isCloudDesktop,
-    isAmazonInternalOs,
+    isAmazonLinux2,
 } from '../vscode/env'
 import { addTypeName } from '../utilities/typeConstructors'
 import globals, { isWeb } from '../extensionGlobals'
-import { mapMetadata } from './telemetryLogger'
+import { mapMetadata, MetadataObj } from './telemetryLogger'
 import { Result } from './telemetry.gen'
 import { MetricDatum } from './clienttelemetry'
 import { isValidationExemptMetric } from './exemptMetrics'
 import { isAmazonQ, isCloud9, isSageMaker } from '../../shared/extensionUtilities'
 import { isUuid, randomUUID } from '../crypto'
 import { ClassToInterfaceType } from '../utilities/tsUtils'
-import { FunctionEntry, type TelemetryTracer } from './spans'
+import { asStringifiedStack, FunctionEntry } from './spans'
 import { telemetry } from './telemetry'
 import { v5 as uuidV5 } from 'uuid'
+import { ToolkitError } from '../errors'
+import { GlobalState } from '../globalState'
 
 const legacySettingsTelemetryValueDisable = 'Disable'
 const legacySettingsTelemetryValueEnable = 'Enable'
@@ -63,16 +65,6 @@ export class TelemetryConfig {
 
     public isEnabled(): boolean {
         return (isAmazonQ() ? this.amazonQConfig : this.toolkitConfig).get(`telemetry`, true)
-    }
-
-    public async initAmazonQSetting() {
-        if (!isAmazonQ() || globals.globalState.tryGet('amazonq.telemetry.migrated', Boolean, false)) {
-            return
-        }
-        // aws.telemetry isn't deprecated, we are just initializing amazonQ.telemetry with its value.
-        // This is also why we need to check that we only try this migration once.
-        await migrateSetting({ key: 'aws.telemetry', type: Boolean }, { key: 'amazonQ.telemetry' })
-        await globals.globalState.update('amazonq.telemetry.migrated', true)
     }
 }
 
@@ -186,6 +178,8 @@ export const getClientId = memoize(
             const localClientId = globalState.tryGet('telemetryClientId', String) // local to extension, despite accessing "global" state
             let clientId: string
 
+            _hadClientIdOnStartup = !!globalClientId || !!localClientId
+
             if (isWeb()) {
                 const machineId = vscode.env.machineId
                 clientId = localClientId ?? machineId
@@ -219,6 +213,22 @@ export const getClientId = memoize(
     }
 )
 
+let _hadClientIdOnStartup = false
+/**
+ * Returns true if the ClientID existed before this session started
+ */
+export const hadClientIdOnStartup = (
+    globalState: GlobalState,
+    update = (globalState: GlobalState) => {
+        getClientId(globalState)
+    }
+) => {
+    // triggers the flow that will update the state, if not done already
+    update(globalState)
+
+    return _hadClientIdOnStartup
+}
+
 export const platformPair = () => `${env.appName.replace(/\s/g, '-')}/${version}`
 
 /**
@@ -247,85 +257,105 @@ export function getUserAgent(
 }
 
 /**
- * All the types of ENVs the extension can run in.
+ * Kinds of machines/environments the extension can run in.
  *
  * NOTES:
- * - append `-amzn` for any environment internal to Amazon
+ * - Append `-amzn` for any environment internal to Amazon.
+ * - Append `-web` for web browser (*without* compute).
  */
 export type EnvType =
     | 'cloud9'
-    | 'cloud9-codecatalyst'
+    | 'cloud9-web'
     | 'cloudDesktop-amzn'
     | 'codecatalyst'
-    | 'local'
     | 'ec2'
     | 'ec2-amzn' // ec2 but with an internal Amazon OS
+    | 'local'
     | 'sagemaker'
+    | 'sagemaker-web'
     | 'test'
+    | 'remote' // Generic (unknown) remote env.
+    | 'web' // Generic (unknown) web env.
     | 'wsl'
-    | 'unknown'
 
 /**
  * Returns the identifier for the environment that the extension is running in.
  */
 export async function getComputeEnvType(): Promise<EnvType> {
-    if (isCloud9('classic')) {
-        return 'cloud9'
-    } else if (isCloud9('codecatalyst')) {
-        return 'cloud9-codecatalyst'
+    const web = isWeb()
+    if (isCloud9()) {
+        return web ? 'cloud9-web' : 'cloud9'
     } else if (isInDevEnv()) {
         return 'codecatalyst'
     } else if (isSageMaker()) {
-        return 'sagemaker'
+        return web ? 'sagemaker-web' : 'sagemaker'
     } else if (isRemoteWorkspace()) {
-        if (isAmazonInternalOs()) {
+        if (isAmazonLinux2()) {
             if (await isCloudDesktop()) {
                 return 'cloudDesktop-amzn'
             }
             return 'ec2-amzn'
         }
         return 'ec2'
-    } else if (env.remoteName) {
+    } else if (env.remoteName === 'wsl') {
         return 'wsl'
     } else if (isAutomation()) {
         return 'test'
-    } else if (!env.remoteName) {
-        return 'local'
+    } else if (web) {
+        return 'web'
+    } else if (env.remoteName) {
+        return 'remote' // Generic (unknown) remote env.
     } else {
-        return 'unknown'
+        return 'local' // Generic (unknown) local env.
     }
 }
 
 /**
  * Validates that emitted telemetry metrics
- * 1. contain a result property and
+ * 1. contain a result property
  * 2. contain a reason propery if result = 'Failed'.
+ * 3. are not missing fields
  */
-export function validateMetricEvent(event: MetricDatum, fatal: boolean) {
-    const failedStr: Result = 'Failed'
-    const telemetryRunDocsStr =
-        ' Consider using `.run()` instead of `.emit()`, which will set these properties automatically. ' +
-        'See https://github.com/aws/aws-toolkit-vscode/blob/master/docs/telemetry.md#guidelines'
-
-    if (!isValidationExemptMetric(event.MetricName) && event.Metadata) {
+export function validateMetricEvent(event: MetricDatum, fatal: boolean, isExempt = isValidationExemptMetric) {
+    if (!isExempt(event.MetricName) && event.Metadata) {
         const metadata = mapMetadata([])(event.Metadata)
-        let msg = 'telemetry: invalid Metric: '
-
-        if (metadata.result === undefined) {
-            msg += `"${event.MetricName}" emitted without the \`result\` property, which is always required.`
-        } else if (metadata.result === failedStr && metadata.reason === undefined) {
-            msg += `"${event.MetricName}" emitted with result=Failed but without the \`reason\` property.`
-        } else {
-            return // Validation passed.
-        }
-
-        msg += telemetryRunDocsStr
-        if (fatal) {
-            throw new Error(msg)
-        }
-        getLogger().warn(msg)
+        validateMetadata(event.MetricName, metadata, fatal)
     }
 }
+
+function validateMetadata(metricName: string, metadata: MetadataObj, fatal: boolean) {
+    const failedStr: Result = 'Failed'
+    const preferRunSuffix =
+        ' Consider using `.run()` instead of `.emit()`, which will set these properties automatically. ' +
+        'See https://github.com/aws/aws-toolkit-vscode/blob/master/docs/telemetry.md#guidelines'
+    const msgPrefix = 'invalid Metric: '
+    const logger = getTelemetryLogger()
+    const logOrThrow = (msg: string, includeSuffix: boolean) => {
+        const fullMsg = msgPrefix + msg + (includeSuffix ? preferRunSuffix : '')
+        logger.warn(fullMsg)
+        if (fatal) {
+            throw new Error('telemetry: ' + fullMsg)
+        }
+    }
+
+    if (metadata.result === undefined) {
+        logOrThrow(`"${metricName}" emitted without the \`result\` property, which is always required.`, true)
+    } else if (metadata.result === failedStr && metadata.reason === undefined) {
+        logOrThrow(`"${metricName}" emitted with result=Failed but without the \`reason\` property.`, true)
+    }
+
+    // TODO: there are many instances in the toolkit where we emit metrics with missing fields. If those can be removed, we can configure this to throw in CI.
+    if (metadata.missingFields) {
+        const logMsg = `${msgPrefix} "${metricName}" emitted with missing fields: ${metadata.missingFields}`
+        logWarningOnce(logMsg)
+    }
+}
+
+function getTelemetryLogger() {
+    return getLogger('telemetry')
+}
+
+const logWarningOnce = oncePerUniqueArg((m: string) => getTelemetryLogger().warn(m))
 
 /**
  * Potentially helpful values for the 'source' field in telemetry.
@@ -365,9 +395,10 @@ export function getOperatingSystem(): OperatingSystem {
     }
 }
 
+type TelemetryContextArgs = FunctionEntry & { emit?: boolean; errorCtx?: boolean }
 /**
  * Decorator that simply wraps the method with a non-emitting telemetry `run()`, automatically
- * `record()`ing the provided function id for later use by {@link TelemetryTracer.getFunctionStack()}
+ * `record()`ing the provided function id for later use by TelemetryTracer.getFunctionStack()
  *
  * This saves us from needing to wrap the entire function:
  *
@@ -393,25 +424,77 @@ export function getOperatingSystem(): OperatingSystem {
  *     }
  * }
  * ```
+ *
+ * @param opts.name The name of the function
+ * @param opts.class The class name of the function
+ * @param opts.emit Whether or not to emit the telemetry event (default: false)
+ * @param opts.errorCtx Whether or not to add the error context to the error (default: false)
  */
-export function withTelemetryContext(functionId: FunctionEntry) {
+export function withTelemetryContext(opts: TelemetryContextArgs) {
+    const shouldErrorCtx = opts.errorCtx !== undefined ? opts.errorCtx : false
     function decorator<This, Args extends any[], Return>(
         originalMethod: (this: This, ...args: Args) => Return,
         _context: ClassMethodDecoratorContext // we dont need this currently but it keeps the compiler happy
     ) {
         function decoratedMethod(this: This, ...args: Args): Return {
             return telemetry.function_call.run(
-                () => {
-                    // DEVELOPERS: Set a breakpoint here and step in to it to debug the original function
-                    return originalMethod.call(this, ...args)
+                (span) => {
+                    try {
+                        span.record({
+                            functionName: opts.name,
+                            className: opts.class,
+                            source: asStringifiedStack(telemetry.getFunctionStack()),
+                        })
+
+                        // DEVELOPERS: Set a breakpoint here and step in and debug the original function
+                        const result = originalMethod.call(this, ...args)
+
+                        if (result instanceof Promise) {
+                            return result.catch((e) => {
+                                if (shouldErrorCtx) {
+                                    throw addContextToError(e, opts)
+                                }
+                                throw e
+                            }) as Return
+                        }
+                        return result
+                    } catch (e) {
+                        if (shouldErrorCtx) {
+                            throw addContextToError(e, opts)
+                        }
+                        throw e
+                    }
                 },
                 {
-                    emit: false,
-                    functionId: functionId,
+                    emit: opts.emit !== undefined ? opts.emit : false,
+                    functionId: { name: opts.name, class: opts.class },
                 }
             )
         }
         return decoratedMethod
     }
     return decorator
+
+    function addContextToError(e: unknown, functionId: FunctionEntry) {
+        return ToolkitError.chain(e, `ctx: ${functionId.name}`, {
+            code: functionId.class,
+        })
+    }
+}
+
+/**
+ * Used to identify the q client info and send the respective origin parameter from LSP to invoke Maestro service at CW API level
+ *
+ * Returns default value of vscode appName or AmazonQ-For-SMUS-CE in case of a sagemaker unified studio environment
+ * Returns default value of vscode appName
+ * OR AmazonQ-For-SMUS-CE in case of SMUS
+ * OR AmazonQ-For-SMAI-CE in case of SMAI
+ */
+export function getClientName(): string {
+    if (isSageMaker('SMUS')) {
+        return 'AmazonQ-For-SMUS-CE'
+    } else if (isSageMaker('SMAI')) {
+        return 'AmazonQ-For-SMAI-CE'
+    }
+    return env.appName
 }

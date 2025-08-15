@@ -29,9 +29,6 @@
                     debugger to the code running in a local Docker container. open
                     <a href="#" @click.prevent="openLaunchJson">launch.json</a>.<br />
                     <br />
-                    <strong>Note:</strong> If you are accessing environment variables in your function code, ensure you
-                    input them in the "Additional fields -> Lambda -> Environment variables" section, following JSON
-                    format:<code>{"KEY":"VALUE"}</code>
                 </em>
             </p>
             <settings-panel id="config-panel" title="General configuration" description="" :start-collapsed="false">
@@ -142,6 +139,10 @@
                         </select>
                         <span class="data-view">runtime in data: {{ launchConfig.lambda.runtime }}</span>
                     </div>
+                    <div class="config-item">
+                        <label for="useDebugger">Attach a debugger</label>
+                        <input type="checkbox" id="useDebugger" v-model="useDebugger" name="useDebugger" />
+                    </div>
                 </div>
                 <div class="target-template" v-else-if="launchConfig.invokeTarget.target === 'template'">
                     <div class="config-item">
@@ -198,6 +199,10 @@
                             For invoke the runtime defined in the template is used.
                         </p>
                     </div>
+                    <div class="config-item">
+                        <label for="useDebugger">Attach a debugger</label>
+                        <input type="checkbox" id="useDebugger" v-model="useDebugger" name="useDebugger" />
+                    </div>
                 </div>
                 <div class="target-apigw" v-else-if="launchConfig.invokeTarget.target === 'api'">
                     <button v-on:click.prevent="loadResource">Load resource</button><br />
@@ -231,6 +236,10 @@
                             </option>
                         </select>
                         <span class="data-view">runtime in data: {{ launchConfig.lambda.runtime }}</span>
+                    </div>
+                    <div class="config-item">
+                        <label for="useDebugger">Attach a debugger</label>
+                        <input type="checkbox" id="useDebugger" v-model="useDebugger" name="useDebugger" />
                     </div>
                     <div class="config-item">
                         <label for="path">Path</label>

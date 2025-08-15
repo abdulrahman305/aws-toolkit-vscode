@@ -15,15 +15,11 @@ export {
     walkthroughInlineSuggestionsExample,
     walkthroughSecurityScanExample,
 } from './onboardingPage/walkthrough'
-export { LspController, Content } from './lsp/lspController'
-export { LspClient } from './lsp/lspClient'
 export { api } from './extApi'
 export { AmazonQChatViewProvider } from './webview/webView'
-export { init as cwChatAppInit } from '../codewhispererChat/app'
-export { init as featureDevChatAppInit } from '../amazonqFeatureDev/app'
-export { init as gumbyChatAppInit } from '../amazonqGumby/app'
-export { activateBadge } from './util/viewBadgeHandler'
 export { amazonQHelpUrl } from '../shared/constants'
+export * as webviewConstants from './webview/ui/texts/constants'
+export * as webviewTabConstants from './webview/ui/tabs/constants'
 export { listCodeWhispererCommandsWalkthrough } from '../codewhisperer/ui/statusBarMenu'
 export { focusAmazonQPanel, focusAmazonQPanelKeybinding } from '../codewhispererChat/commands/registerCommands'
 export { TryChatCodeLensProvider, tryChatCodeLensCommand } from '../codewhispererChat/editor/codelens'
@@ -33,12 +29,19 @@ export {
     openDeletedDiff,
     getOriginalFileUri,
     getFileDiffUris,
-    openFile,
+    computeDiff,
 } from './commons/diff'
+export { AuthFollowUpType, AuthMessageDataMap } from './auth/model'
+export { ChatItemType, referenceLogText } from './commons/model'
+export { ExtensionMessage } from '../amazonq/webview/ui/commands'
 export { CodeReference } from '../codewhispererChat/view/connector/connector'
-export { AuthMessageDataMap, AuthFollowUpType } from './auth/model'
 export { extractAuthFollowUp } from './util/authUtils'
-import { FeatureContext } from '../shared'
+export * as secondaryAuth from '../auth/secondaryAuth'
+export * as authConnection from '../auth/connection'
+export * as featureConfig from './webview/generators/featureConfig'
+export * as messageDispatcher from './webview/messages/messageDispatcher'
+import { FeatureContext } from '../shared/featureConfig'
+export { EditorContentController, ViewDiffMessage } from './commons/controllers/contentController'
 
 /**
  * main from createMynahUI is a purely browser dependency. Due to this
@@ -50,11 +53,14 @@ export function createMynahUI(
     ideApi: any,
     amazonQEnabled: boolean,
     featureConfigsSerialized: [string, FeatureContext][],
+    welcomeCount: number,
     disabledCommands?: string[]
 ) {
     if (typeof window !== 'undefined') {
         const mynahUI = require('./webview/ui/main')
-        return mynahUI.createMynahUI(ideApi, amazonQEnabled, featureConfigsSerialized, disabledCommands)
+        return mynahUI.createMynahUI(ideApi, amazonQEnabled, featureConfigsSerialized, welcomeCount, disabledCommands)
     }
     throw new Error('Not implemented for node')
 }
+
+export * from './commons/types'

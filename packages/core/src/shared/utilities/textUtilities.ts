@@ -7,11 +7,11 @@ import * as vscode from 'vscode'
 import * as crypto from 'crypto'
 import * as fs from 'fs' // eslint-disable-line no-restricted-imports
 import { default as stripAnsi } from 'strip-ansi'
-import { isCloud9 } from '../extensionUtilities'
-import { getLogger } from '../logger'
+import { getLogger } from '../logger/logger'
+import { ViewDiffMessage } from '../../amazonq/commons/controllers/contentController'
 
 /**
- * Truncates string `s` if it exceeds `n` chars.
+ * Truncates string `s` if it has or exceeds `n` chars.
  *
  * If `n` is negative, truncates at start instead of end.
  *
@@ -120,10 +120,10 @@ export function getStringHash(text: string | Buffer): string {
 }
 
 /**
- * Temporary util while Cloud9 does not have codicon support
+ * Previously used to add Cloud9 support (no icons). Might be useful in the future, so let's leave it here.
  */
 export function addCodiconToString(codiconName: string, text: string): string {
-    return isCloud9() ? text : `$(${codiconName}) ${text}`
+    return `$(${codiconName}) ${text}`
 }
 
 /**
@@ -269,8 +269,16 @@ export function decodeBase64(base64Str: string): string {
  * @param {any} message - The message object containing the file and selection context.
  * @returns {Object} - An object with `filePath` and `selection` properties.
  */
-export function extractFileAndCodeSelectionFromMessage(message: any) {
+export function extractFileAndCodeSelectionFromMessage(message: ViewDiffMessage) {
     const filePath = message?.context?.activeFileContext?.filePath
+    const fileText = message?.context?.activeFileContext?.fileText
     const selection = message?.context?.focusAreaContext?.selectionInsideExtendedCodeBlock as vscode.Selection
-    return { filePath, selection }
+    return { filePath, fileText, selection }
+}
+
+export function matchesPattern(source: string, target: string | RegExp) {
+    if (typeof target === 'string') {
+        return source.includes(target)
+    }
+    return target.test(source)
 }

@@ -13,10 +13,13 @@ import * as vscode from 'vscode'
 export type contextKey =
     | 'aws.isDevMode'
     | 'aws.isSageMaker'
+    | 'aws.isSageMakerUnifiedStudio'
     | 'aws.isWebExtHost'
     | 'aws.isInternalUser'
     | 'aws.amazonq.showLoginView'
+    | 'aws.amazonq.security.noMatches'
     | 'aws.amazonq.notifications.show'
+    | 'aws.amazonq.connectedSsoIdc'
     | 'aws.codecatalyst.connected'
     | 'aws.codewhisperer.connected'
     | 'aws.codewhisperer.connectionExpired'
@@ -24,7 +27,9 @@ export type contextKey =
     | 'aws.explorer.showAuthView'
     | 'aws.toolkit.amazonq.dismissed'
     | 'aws.toolkit.amazonqInstall.dismissed'
+    | 'aws.stepFunctions.isWorkflowStudioFocused'
     | 'aws.toolkit.notifications.show'
+    | 'aws.amazonq.editSuggestionActive'
     // Deprecated/legacy names. New keys should start with "aws.".
     | 'codewhisperer.activeLine'
     | 'gumby.isPlanAvailable'
@@ -35,6 +40,7 @@ export type contextKey =
     | 'gumby.wasQCodeTransformationUsed'
     | 'amazonq.inline.codelensShortcutEnabled'
     | 'aws.toolkit.lambda.walkthroughSelected'
+    | 'aws.amazonq.amazonqChatLSP.isFocus'
 
 const contextMap: Partial<Record<contextKey, any>> = {}
 

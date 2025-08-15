@@ -33,15 +33,19 @@
         "newChange": "echo 'Must specify subproject/workspace with -w packages/<subproject>' && false",
         "createRelease": "echo 'Must specify subproject/workspace with -w packages/<subproject>' && false",
         "lint": "npm run lint -w packages/ --if-present",
-        "lintfix": "eslint -c .eslintrc.js --ignore-path .gitignore --ignore-pattern '**/*.json' --ignore-pattern '**/*.gen.ts' --ignore-pattern '**/types/*.d.ts' --ignore-pattern '**/src/testFixtures/**' --ignore-pattern '**/resources/js/graphStateMachine.js' --fix --ext .ts packages plugins",
+        "lintfix": "eslint -c .eslintrc.js --ignore-path .gitignore --ignore-pattern '**/*.json' --ignore-pattern '**/*.gen.ts' --ignore-pattern '**/types/*.d.ts' --ignore-pattern '**/src/testFixtures/**' --fix --ext .ts packages plugins",
         "clean": "npm run clean -w packages/ -w plugins/",
         "reset": "npm run clean && ts-node ./scripts/clean.ts node_modules && npm install",
-        "generateNonCodeFiles": "npm run generateNonCodeFiles -w packages/ --if-present"
+        "generateNonCodeFiles": "npm run generateNonCodeFiles -w packages/ --if-present",
+        "mergeReports": "ts-node ./scripts/mergeReports.ts",
+        "skippedTestReport": "ts-node ./scripts/skippedTestReport.ts ./packages/amazonq/test/e2e/"
     },
     "devDependencies": {
-        "@aws-toolkits/telemetry": "^1.0.282",
+        "@aws-toolkits/telemetry": "^1.0.329",
         "@playwright/browser-chromium": "^1.43.1",
+        "@stylistic/eslint-plugin": "^2.11.0",
         "@types/he": "^1.2.3",
+        "@types/jaro-winkler": "^0.2.4",
         "@types/vscode": "^1.68.0",
         "@types/vscode-webview": "^1.57.1",
         "@types/webpack-env": "^1.18.5",
@@ -49,7 +53,7 @@
         "@typescript-eslint/parser": "^7.14.1",
         "@vscode/codicons": "^0.0.33",
         "@vscode/test-electron": "^2.3.8",
-        "@vscode/test-web": "^0.0.54",
+        "@vscode/test-web": "^0.0.65",
         "@vscode/vsce": "^2.19.0",
         "eslint": "^8.56.0",
         "eslint-config-prettier": "^9.1.0",
@@ -70,7 +74,9 @@
         "webpack-merge": "^5.10.0"
     },
     "dependencies": {
+        "@aws/language-server-runtimes": "^0.2.125",
         "@types/node": "^22.7.5",
+        "jaro-winkler": "^0.2.8",
         "vscode-nls": "^5.2.0",
         "vscode-nls-dev": "^4.0.4"
     }

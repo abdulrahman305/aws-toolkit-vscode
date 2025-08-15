@@ -31,8 +31,13 @@ export type globalKey =
     | 'aws.amazonq.codewhisperer.newCustomizations'
     | 'aws.amazonq.hasShownWalkthrough'
     | 'aws.amazonq.showTryChatCodeLens'
+    | 'aws.amazonq.securityIssueFilters'
+    | 'aws.amazonq.codescan.groupingStrategy'
     | 'aws.amazonq.notifications'
+    | 'aws.amazonq.welcomeChatShowCount'
+    | 'aws.amazonq.disclaimerAcknowledged' // Legacy, use `AmazonQPromptSettings` instead.
     | 'aws.notifications'
+    | 'aws.notifications.dev' // keys to store notifications for testing
     | 'aws.downloadPath'
     | 'aws.lastTouchedS3Folder'
     | 'aws.lastUploadedToS3Folder'
@@ -40,8 +45,11 @@ export type globalKey =
     | 'aws.toolkit.amazonq.dismissed'
     | 'aws.toolkit.amazonqInstall.dismissed'
     | 'aws.amazonq.workspaceIndexToggleOn'
-    | 'aws.toolkit.separationPromptCommand'
-    | 'aws.toolkit.separationPromptDismissed'
+    | 'aws.toolkit.lsp.versions'
+    | 'aws.toolkit.lsp.manifest'
+    | 'aws.amazonq.customization.overrideV2'
+    | 'aws.amazonq.regionProfiles'
+    | 'aws.amazonq.regionProfiles.cache'
     // Deprecated/legacy names. New keys should start with "aws.".
     | '#sessionCreationDates' // Legacy name from `ssoAccessTokenProvider.ts`.
     | 'CODECATALYST_RECONNECT'
@@ -56,12 +64,12 @@ export type globalKey =
     | 'dev.beta'
     | 'globalsMostRecentVersion'
     | 'gumby.wasQCodeTransformationUsed'
-    | 'hasAlreadyOpenedAmazonQ'
     | 'isExtensionFirstUse'
     | 'lastExtensionVersion'
     | 'lastSelectedRegion'
     | 'lastOsStartTime'
     | 'recentCredentials'
+    | 'recentSso'
     // List of regions enabled in AWS Explorer.
     | 'region'
     // TODO: implement this via `PromptSettings` instead of globalState.
@@ -71,6 +79,10 @@ export type globalKey =
     | 'aws.toolkit.lambda.walkthroughSelected'
     | 'aws.toolkit.lambda.walkthroughCompleted'
     | 'aws.toolkit.appComposer.templateToOpenOnStart'
+    | 'aws.lambda.remoteDebugContext'
+    | 'aws.lambda.remoteDebugSnapshot'
+    // List of Domain-Users to show/hide Sagemaker SpaceApps in AWS Explorer.
+    | 'aws.sagemaker.selectedDomainUsers'
 
 /**
  * Extension-local (not visible to other vscode extensions) shared state which persists after IDE

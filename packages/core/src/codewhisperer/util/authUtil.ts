@@ -8,7 +8,7 @@ import * as localizedText from '../../shared/localizedText'
 import { Auth } from '../../auth/auth'
 import { ToolkitError, isNetworkError, tryRun } from '../../shared/errors'
 import { getSecondaryAuth, setScopes } from '../../auth/secondaryAuth'
-import { isCloud9, isSageMaker } from '../../shared/extensionUtilities'
+import { isSageMaker } from '../../shared/extensionUtilities'
 import { AmazonQPromptSettings } from '../../shared/settings'
 import {
     scopesCodeWhispererCore,
@@ -28,7 +28,7 @@ import {
     getTelemetryMetadataForConn,
     ProfileNotFoundError,
 } from '../../auth/connection'
-import { getLogger } from '../../shared/logger'
+import { getLogger } from '../../shared/logger/logger'
 import { Commands, placeholder } from '../../shared/vscode/commands2'
 import { vsCodeState } from '../models/model'
 import { onceChanged, once } from '../../shared/utilities/functionUtils'
@@ -44,6 +44,8 @@ import { telemetry } from '../../shared/telemetry/telemetry'
 import { asStringifiedStack } from '../../shared/telemetry/spans'
 import { withTelemetryContext } from '../../shared/telemetry/util'
 import { focusAmazonQPanel } from '../../codewhispererChat/commands/registerCommands'
+import { throttle } from 'lodash'
+import { RegionProfileManager } from '../region/regionProfileManager'
 
 /** Backwards compatibility for connections w pre-chat scopes */
 export const codeWhispererCoreScopes = [...scopesCodeWhispererCore]
@@ -55,14 +57,8 @@ export const amazonQScopes = [...codeWhispererChatScopes, ...scopesGumby, ...sco
  * for Amazon Q.
  */
 export const isValidCodeWhispererCoreConnection = (conn?: Connection): conn is Connection => {
-    if (isCloud9('classic')) {
-        return isIamConnection(conn)
-    }
-
     return (
-        (isSageMaker() && isIamConnection(conn)) ||
-        (isCloud9('codecatalyst') && isIamConnection(conn)) ||
-        (isSsoConnection(conn) && hasScopes(conn, codeWhispererCoreScopes))
+        (isSageMaker() && isIamConnection(conn)) || (isSsoConnection(conn) && hasScopes(conn, codeWhispererCoreScopes))
     )
 }
 /** Superset that includes all of CodeWhisperer + Amazon Q */
@@ -110,7 +106,10 @@ export class AuthUtil {
     )
     public readonly restore = () => this.secondaryAuth.restoreConnection()
 
-    public constructor(public readonly auth = Auth.instance) {}
+    public constructor(
+        public readonly auth = Auth.instance,
+        public readonly regionProfileManager = new RegionProfileManager(() => this.conn)
+    ) {}
 
     public initCodeWhispererHooks = once(() => {
         this.auth.onDidChangeConnectionState(async (e) => {
@@ -126,6 +125,7 @@ export class AuthUtil {
             getLogger().info(`codewhisperer: active connection changed`)
             if (this.isValidEnterpriseSsoInUse()) {
                 void vscode.commands.executeCommand('aws.amazonq.notifyNewCustomizations')
+                await this.regionProfileManager.restoreProfileSelection()
             }
             vsCodeState.isFreeTierLimitReached = false
             await Promise.all([
@@ -140,18 +140,27 @@ export class AuthUtil {
             if (this.isValidEnterpriseSsoInUse() || (this.isBuilderIdInUse() && !this.isConnectionExpired())) {
                 await showAmazonQWalkthroughOnce()
             }
+
+            if (!this.isConnected()) {
+                await this.regionProfileManager.invalidateProfile(this.regionProfileManager.activeRegionProfile?.arn)
+                await this.regionProfileManager.clearCache()
+            }
+        })
+
+        this.regionProfileManager.onDidChangeRegionProfile(async () => {
+            await this.setVscodeContextProps()
         })
     })
 
     public async setVscodeContextProps() {
-        if (isCloud9()) {
-            return
-        }
-
-        await setContext('aws.codewhisperer.connected', this.isConnected())
-        const doShowAmazonQLoginView = !this.isConnected() || this.isConnectionExpired()
+        // if users are "pending profile selection", they're not fully connected and require profile selection for Q usage
+        // requireProfileSelection() always returns false for builderID users
+        await setContext('aws.codewhisperer.connected', this.isConnected() && !this.requireProfileSelection())
+        const doShowAmazonQLoginView =
+            !this.isConnected() || this.isConnectionExpired() || this.requireProfileSelection()
         await setContext('aws.amazonq.showLoginView', doShowAmazonQLoginView)
         await setContext('aws.codewhisperer.connectionExpired', this.isConnectionExpired())
+        await setContext('aws.amazonq.connectedSsoIdc', isIdcSsoConnection(this.conn))
     }
 
     public reformatStartUrl(startUrl: string | undefined) {
@@ -258,7 +267,9 @@ export class AuthUtil {
         } catch (err) {
             if (err instanceof ProfileNotFoundError) {
                 // Expected that connection would be deleted by conn.getToken()
-                void focusAmazonQPanel.execute(placeholder, 'profileNotFoundSignout')
+                focusAmazonQPanel.execute(placeholder, 'profileNotFoundSignout').catch((e) => {
+                    getLogger().error('focusAmazonQPanel failed: %s', e)
+                })
             }
             throw err
         }
@@ -300,6 +311,13 @@ export class AuthUtil {
         }
 
         return connectionExpired
+    }
+
+    requireProfileSelection(): boolean {
+        if (isBuilderIdConnection(this.conn)) {
+            return false
+        }
+        return isIdcSsoConnection(this.conn) && this.regionProfileManager.activeRegionProfile === undefined
     }
 
     private logConnection() {
@@ -366,7 +384,7 @@ export class AuthUtil {
     public async notifySessionConfiguration() {
         const suppressId = 'amazonQSessionConfigurationMessage'
         const settings = AmazonQPromptSettings.instance
-        const shouldShow = await settings.isPromptEnabled(suppressId)
+        const shouldShow = settings.isPromptEnabled(suppressId)
         if (!shouldShow) {
             return
         }
@@ -412,9 +430,23 @@ export class AuthUtil {
      *
      * By default, network errors are ignored when determining auth state since they may be silently
      * recoverable later.
+     *
+     * THROTTLE: This function is called in rapid succession by Amazon Q features and can lead to
+     *           a barrage of disk access and/or token refreshes. We throttle to deal with this.
+     *
+     *           Note we do an explicit cast of the return type due to Lodash types incorrectly indicating
+     *           a FeatureAuthState or undefined can be returned. But since we set `leading: true`
+     *           it will always return FeatureAuthState
+     */
+    public getChatAuthState = throttle(() => this._getChatAuthState(), 2000, {
+        leading: true,
+    }) as () => Promise<FeatureAuthState>
+    /**
+     * IMPORTANT: Only use this if you do NOT want to swallow network errors, otherwise use {@link getChatAuthState()}
+     * @param ignoreNetErr swallows network errors
      */
     @withTelemetryContext({ name: 'getChatAuthState', class: authClassName })
-    public async getChatAuthState(ignoreNetErr: boolean = true): Promise<FeatureAuthState> {
+    public async _getChatAuthState(ignoreNetErr: boolean = true): Promise<FeatureAuthState> {
         // The state of the connection may not have been properly validated
         // and the current state we see may be stale, so refresh for latest state.
         if (ignoreNetErr) {
@@ -453,11 +485,24 @@ export class AuthUtil {
         }
 
         if (isBuilderIdConnection(conn) || isIdcSsoConnection(conn) || isSageMaker()) {
+            // TODO: refactor
             if (isValidCodeWhispererCoreConnection(conn)) {
-                state[Features.codewhispererCore] = AuthStates.connected
+                if (this.requireProfileSelection()) {
+                    state[Features.codewhispererCore] = AuthStates.pendingProfileSelection
+                } else {
+                    state[Features.codewhispererCore] = AuthStates.connected
+                }
             }
             if (isValidAmazonQConnection(conn)) {
-                Object.values(Features).forEach((v) => (state[v as Feature] = AuthStates.connected))
+                if (this.requireProfileSelection()) {
+                    for (const v of Object.values(Features)) {
+                        state[v as Feature] = AuthStates.pendingProfileSelection
+                    }
+                } else {
+                    for (const v of Object.values(Features)) {
+                        state[v as Feature] = AuthStates.connected
+                    }
+                }
             }
         }
 
@@ -499,30 +544,6 @@ export class AuthUtil {
     }
 }
 
-/**
- * Returns true if an SSO connection with AmazonQ and CodeWhisperer scopes are found,
- * even if the connection is expired.
- *
- * Note: This function will become irrelevant if/when the Amazon Q view tree is removed
- * from the toolkit.
- */
-export function isPreviousQUser() {
-    const auth = AuthUtil.instance
-
-    if (!auth.isConnected() || !isSsoConnection(auth.conn)) {
-        return false
-    }
-    const missingScopes =
-        (auth.isEnterpriseSsoInUse() && !hasScopes(auth.conn, amazonQScopes)) ||
-        !hasScopes(auth.conn, codeWhispererChatScopes)
-
-    if (missingScopes) {
-        return false
-    }
-
-    return true
-}
-
 export type FeatureAuthState = { [feature in Feature]: AuthState }
 export type Feature = (typeof Features)[keyof typeof Features]
 export type AuthState = (typeof AuthStates)[keyof typeof AuthStates]
@@ -549,6 +570,7 @@ export const AuthStates = {
      * but fetching/refreshing the token resulted in a network error.
      */
     connectedWithNetworkError: 'connectedWithNetworkError',
+    pendingProfileSelection: 'pendingProfileSelection',
 } as const
 const Features = {
     codewhispererCore: 'codewhispererCore',

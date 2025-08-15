@@ -3,8 +3,6 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { isCloud9 } from './extensionUtilities'
-
 // constants for working with milliseconds
 export const oneSecond = 1000
 export const oneMinute = oneSecond * 60
@@ -119,7 +117,7 @@ export function getRelativeDate(from: Date, now: Date = new Date()): string {
  * US: Jan 5, 2020 5:30:20 PM GMT-0700
  * GB: 5 Jan 2020 17:30:20 GMT+0100
  */
-export function formatLocalized(d: Date = new Date(), cloud9 = isCloud9()): string {
+export function formatLocalized(d: Date = new Date()): string {
     const dateFormat = new Intl.DateTimeFormat('en-US', {
         year: 'numeric',
         month: 'short',
@@ -129,7 +127,7 @@ export function formatLocalized(d: Date = new Date(), cloud9 = isCloud9()): stri
         hour: 'numeric',
         minute: 'numeric',
         second: 'numeric',
-        timeZoneName: cloud9 ? 'short' : 'shortOffset',
+        timeZoneName: 'shortOffset',
     })
 
     return `${dateFormat.format(d)} ${timeFormat.format(d)}`
@@ -155,4 +153,26 @@ export function formatDateTimestamp(forceUTC: boolean, d: Date = new Date()): st
     const iso = d.toISOString()
     // trim 'Z' (last char of iso string) and add offset string
     return `${iso.substring(0, iso.length - 1)}${offsetString}`
+}
+
+/**
+ * Checks if a given timestamp is within 30 days of the current day
+ * @param timeStamp
+ * @returns true if timeStamp is within 30 days, false otherwise
+ */
+export function isWithin30Days(timeStamp: string): boolean {
+    if (!timeStamp) {
+        return false // No timestamp given
+    }
+
+    const startDate = new Date(timeStamp)
+    const currentDate = new Date()
+
+    // Calculate the difference in milliseconds
+    const timeDifference = currentDate.getTime() - startDate.getTime()
+
+    // Convert milliseconds to days (1000ms * 60s * 60min * 24hr)
+    const daysDifference = timeDifference / (1000 * 60 * 60 * 24)
+
+    return daysDifference <= 30
 }

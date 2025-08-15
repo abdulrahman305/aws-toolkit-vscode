@@ -17,7 +17,7 @@ import globals, { initialize, isWeb } from './shared/extensionGlobals'
 import { join } from 'path'
 import { Commands } from './shared/vscode/commands2'
 import { endpointsFileUrl, githubCreateIssueUrl, githubUrl } from './shared/constants'
-import { getIdeProperties, aboutExtension, isCloud9, getDocUrl } from './shared/extensionUtilities'
+import { getIdeProperties, aboutExtension, getDocUrl, isSageMaker } from './shared/extensionUtilities'
 import { logAndShowError, logAndShowWebviewError } from './shared/utilities/logAndShowUtils'
 import { telemetry } from './shared/telemetry/telemetry'
 import { openUrl } from './shared/utilities/vsCodeUtils'
@@ -38,7 +38,6 @@ import { RegionProvider, getEndpointsFromFetcher } from './shared/regions/region
 import { getMachineId, isAutomation } from './shared/vscode/env'
 import { registerCommandErrorHandler } from './shared/vscode/commands2'
 import { registerWebviewErrorHandler } from './webviews/server'
-import { showQuickStartWebview } from './shared/extensionStartup'
 import { ExtContext, VSCODE_EXTENSION_ID } from './shared/extensions'
 import { getSamCliContext } from './shared/sam/cli/samCliContext'
 import { UriHandler } from './shared/vscode/uriHandler'
@@ -50,8 +49,12 @@ import { registerCommands } from './commands'
 // In web mode everything must be in a single file, so things like the endpoints file will not be available.
 // The following imports the endpoints file, which causes webpack to bundle it in the final output file
 import endpoints from '../resources/endpoints.json'
-import { getLogger, maybeShowMinVscodeWarning, setupUninstallHandler } from './shared'
 import { showViewLogsMessage } from './shared/utilities/messages'
+import { AWSClientBuilderV3 } from './shared/awsClientBuilderV3'
+import { setupUninstallHandler } from './shared/handleUninstall'
+import { maybeShowMinVscodeWarning } from './shared/extensionStartup'
+import { getLogger } from './shared/logger/logger'
+import { setContext } from './shared/vscode/setContext'
 
 disableAwsSdkWarning()
 
@@ -75,7 +78,7 @@ export async function activateCommon(
     errors.init(fs.getUsername(), isAutomation())
     await initializeComputeRegion()
 
-    globals.contextPrefix = '' //todo: disconnect supplied argument
+    globals.contextPrefix = '' // todo: disconnect supplied argument
 
     registerCommandErrorHandler((info, error) => {
         const defaultMessage = localize('AWS.generic.message.error', 'Failed to run command: {0}', info.id)
@@ -89,7 +92,7 @@ export async function activateCommon(
     // Setup the logger
     const toolkitOutputChannel = vscode.window.createOutputChannel('AWS Toolkit', { log: true })
     const toolkitLogChannel = vscode.window.createOutputChannel('AWS Toolkit Logs', { log: true })
-    await activateLogger(context, contextPrefix, toolkitOutputChannel, toolkitLogChannel)
+    await activateLogger(context, contextPrefix, toolkitLogChannel, toolkitOutputChannel)
     globals.outputChannel = toolkitOutputChannel
     globals.logOutputChannel = toolkitLogChannel
 
@@ -99,23 +102,11 @@ export async function activateCommon(
 
     void maybeShowMinVscodeWarning('1.83.0')
 
-    if (isCloud9()) {
-        vscode.window.withProgress = wrapWithProgressForCloud9(globals.outputChannel)
-        context.subscriptions.push(
-            Commands.register('aws.quickStart', async () => {
-                try {
-                    await showQuickStartWebview(context)
-                } finally {
-                    telemetry.aws_helpQuickstart.emit({ result: 'Succeeded' })
-                }
-            })
-        )
-    }
-
-    //setup globals
+    // setup globals
     globals.machineId = await getMachineId()
     globals.awsContext = new DefaultAwsContext()
     globals.sdkClientBuilder = new DefaultAWSClientBuilder(globals.awsContext)
+    globals.sdkClientBuilderV3 = new AWSClientBuilderV3(globals.awsContext)
     globals.loginManager = new LoginManager(globals.awsContext, new CredentialsStore())
 
     // order matters here
@@ -127,6 +118,9 @@ export async function activateCommon(
 
     // telemetry
     await activateTelemetry(context, globals.awsContext, Settings.instance, 'AWS Toolkit For VS Code')
+
+    // set context var to identify if its SageMaker Unified Studio or not
+    await setContext('aws.isSageMakerUnifiedStudio', isSageMaker('SMUS'))
 
     // Create this now, but don't call vscode.window.registerUriHandler() until after all
     // Toolkit services have a chance to register their path handlers. #4105
@@ -204,12 +198,12 @@ export function registerGenericCommands(extensionContext: vscode.ExtensionContex
  * https://docs.aws.amazon.com/general/latest/gr/rande.html
  */
 export function makeEndpointsProvider() {
-    let localManifestFetcher: ResourceFetcher
-    let remoteManifestFetcher: ResourceFetcher
+    let localManifestFetcher: ResourceFetcher<string>
+    let remoteManifestFetcher: ResourceFetcher<Response>
     if (isWeb()) {
         localManifestFetcher = { get: async () => JSON.stringify(endpoints) }
         // Cannot use HttpResourceFetcher due to web mode breaking on import
-        remoteManifestFetcher = { get: async () => (await fetch(endpointsFileUrl)).text() }
+        remoteManifestFetcher = { get: async () => await fetch(endpointsFileUrl) }
     } else {
         localManifestFetcher = new FileResourceFetcher(globals.manifestPaths.endpoints)
         // HACK: HttpResourceFetcher breaks web mode when imported, so we use webpack.IgnorePlugin()
@@ -222,34 +216,5 @@ export function makeEndpointsProvider() {
     return {
         local: () => getEndpointsFromFetcher(localManifestFetcher),
         remote: () => getEndpointsFromFetcher(remoteManifestFetcher),
-    }
-}
-
-/**
- * Wraps the `vscode.window.withProgress` functionality with functionality that also writes to the output channel.
- *
- * Cloud9 does not show a progress notification.
- */
-function wrapWithProgressForCloud9(channel: vscode.OutputChannel): (typeof vscode.window)['withProgress'] {
-    const withProgress = vscode.window.withProgress.bind(vscode.window)
-
-    return (options, task) => {
-        if (options.title) {
-            channel.appendLine(options.title)
-        }
-
-        return withProgress(options, (progress, token) => {
-            const newProgress: typeof progress = {
-                ...progress,
-                report: (value) => {
-                    if (value.message) {
-                        channel.appendLine(value.message)
-                    }
-                    progress.report(value)
-                },
-            }
-
-            return task(newProgress, token)
-        })
     }
 }

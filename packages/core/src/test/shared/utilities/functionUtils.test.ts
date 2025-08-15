@@ -4,10 +4,8 @@
  */
 
 import assert from 'assert'
-import { once, onceChanged, debounce, withRetries } from '../../../shared/utilities/functionUtils'
+import { once, onceChanged, debounce, oncePerUniqueArg } from '../../../shared/utilities/functionUtils'
 import { installFakeClock } from '../../testUtil'
-import { stub, SinonStub } from 'sinon'
-import { InstalledClock } from '@sinonjs/fake-timers'
 
 describe('functionUtils', function () {
     it('once()', function () {
@@ -50,6 +48,82 @@ describe('functionUtils', function () {
         fn('arg1', arg2_)
         assert.strictEqual(counter, 3)
     })
+
+    it('oncePerUniqueArg()', function () {
+        let counter = 0
+        const fn = oncePerUniqueArg((s: string) => {
+            counter++
+            return `processed-${s}`
+        })
+
+        const result1 = fn('hello')
+        assert.strictEqual(result1, 'processed-hello')
+        assert.strictEqual(counter, 1, 'First call with unique arg should execute')
+
+        const result2 = fn('hello')
+        assert.strictEqual(result2, undefined)
+        assert.strictEqual(counter, 1, 'Second call with same arg should not execute')
+
+        const result3 = fn('world')
+        assert.strictEqual(result3, 'processed-world')
+        assert.strictEqual(counter, 2, 'Call with new arg should execute')
+
+        fn('hello')
+        fn('world')
+        assert.strictEqual(counter, 2, 'Repeated calls with seen args should not execute')
+
+        // New arg should execute
+        const result4 = fn('test')
+        assert.strictEqual(result4, 'processed-test')
+        assert.strictEqual(counter, 3)
+    })
+
+    it('oncePerUniqueArg() with custom key', function () {
+        let counter = 0
+        const fn = oncePerUniqueArg(
+            (_s1: string, _s2: string) => {
+                counter++
+            },
+            { key: (s1, _s2) => s1 }
+        )
+
+        fn('hello', 'world')
+        assert.strictEqual(counter, 1, 'First call with unique arg should execute')
+
+        fn('hello', 'worldss')
+        assert.strictEqual(counter, 1, 'Second arg being different should not execute')
+
+        fn('world', 'hello')
+        assert.strictEqual(counter, 2, 'First arg being different should execute')
+    })
+
+    it('oncePerUniqueArg() with overflow limit', function () {
+        let counter = 0
+        // Create function with small overflow limit
+        const fn = oncePerUniqueArg(
+            (_s: string) => {
+                counter++
+                return counter
+            },
+            { overflow: 2 }
+        )
+
+        // Fill the buffer
+        fn('one')
+        fn('two')
+        assert.strictEqual(counter, 2)
+
+        fn('three')
+        assert.strictEqual(counter, 3, '"three" call should execute since it is a new value')
+
+        // 'one' should now be treated as new again since it was evicted
+        fn('one')
+        assert.strictEqual(counter, 4, 'one should still be in the buffer')
+
+        // 'three' should still be in the buffer (not executed)
+        fn('three')
+        assert.strictEqual(counter, 4, 'three should still be in the buffer')
+    })
 })
 
 describe('debounce', function () {
@@ -76,6 +150,33 @@ describe('debounce', function () {
         await Promise.all([fn(), fn()])
         await Promise.all([fn(), fn(), fn()])
         assert.strictEqual(counter, 2)
+    })
+
+    describe('useLastCall option', function () {
+        let args: number[]
+        let clock: ReturnType<typeof installFakeClock>
+        let addToArgs: (i: number) => void
+
+        before(function () {
+            args = []
+            clock = installFakeClock()
+            addToArgs = (n: number) => args.push(n)
+        })
+
+        afterEach(function () {
+            clock.uninstall()
+            args.length = 0
+        })
+
+        it('only calls with the last args', async function () {
+            const debounced = debounce(addToArgs, 10, true)
+            const p1 = debounced(1)
+            const p2 = debounced(2)
+            const p3 = debounced(3)
+            await clock.tickAsync(100)
+            await Promise.all([p1, p2, p3])
+            assert.deepStrictEqual(args, [3])
+        })
     })
 
     describe('window rolling', function () {
@@ -107,84 +208,5 @@ describe('debounce', function () {
             assert.strictEqual(counter, 2)
             assert.strictEqual(calls.length, 4)
         })
-    })
-})
-
-// function to test the withRetries method. It passes in a stub function as the argument and has different tests that throw on different iterations
-describe('withRetries', function () {
-    let clock: InstalledClock
-    let fn: SinonStub
-
-    beforeEach(function () {
-        fn = stub()
-        clock = installFakeClock()
-    })
-
-    afterEach(function () {
-        clock.uninstall()
-    })
-
-    it('retries the function until it succeeds, using defaults', async function () {
-        fn.onCall(0).throws()
-        fn.onCall(1).throws()
-        fn.onCall(2).resolves('success')
-        assert.strictEqual(await withRetries(fn), 'success')
-    })
-
-    it('retries the function until it succeeds at the final try', async function () {
-        fn.onCall(0).throws()
-        fn.onCall(1).throws()
-        fn.onCall(2).throws()
-        fn.onCall(3).resolves('success')
-        assert.strictEqual(await withRetries(fn, { maxRetries: 4 }), 'success')
-    })
-
-    it('throws the last error if the function always fails, using defaults', async function () {
-        fn.onCall(0).throws()
-        fn.onCall(1).throws()
-        fn.onCall(2).throws()
-        fn.onCall(3).resolves('unreachable')
-        await assert.rejects(async () => {
-            await withRetries(fn)
-        })
-    })
-
-    it('throws the last error if the function always fails', async function () {
-        fn.onCall(0).throws()
-        fn.onCall(1).throws()
-        fn.onCall(2).throws()
-        fn.onCall(3).throws()
-        fn.onCall(4).resolves('unreachable')
-        await assert.rejects(async () => {
-            await withRetries(fn, { maxRetries: 4 })
-        })
-    })
-
-    it('honors retry delay + backoff multiplier', async function () {
-        fn.onCall(0).throws() // 100ms
-        fn.onCall(1).throws() // 200ms
-        fn.onCall(2).throws() // 400ms
-        fn.onCall(3).resolves('success')
-
-        const res = withRetries(fn, { maxRetries: 4, delay: 100, backoff: 2 })
-
-        // Check the call count after each iteration, ensuring the function is called
-        // after the correct delay between retries.
-        await clock.tickAsync(99)
-        assert.strictEqual(fn.callCount, 1)
-        await clock.tickAsync(1)
-        assert.strictEqual(fn.callCount, 2)
-
-        await clock.tickAsync(199)
-        assert.strictEqual(fn.callCount, 2)
-        await clock.tickAsync(1)
-        assert.strictEqual(fn.callCount, 3)
-
-        await clock.tickAsync(399)
-        assert.strictEqual(fn.callCount, 3)
-        await clock.tickAsync(1)
-        assert.strictEqual(fn.callCount, 4)
-
-        assert.strictEqual(await res, 'success')
     })
 })

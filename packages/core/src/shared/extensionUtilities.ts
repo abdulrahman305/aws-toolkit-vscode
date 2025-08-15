@@ -7,12 +7,11 @@ import * as _ from 'lodash'
 import * as os from 'os'
 import * as vscode from 'vscode'
 import * as nls from 'vscode-nls'
-import { getLogger } from './logger'
+import { getLogger } from './logger/logger'
 import { VSCODE_EXTENSION_ID, extensionAlphaVersion } from './extensions'
 import { Ec2MetadataClient } from './clients/ec2MetadataClient'
 import { DefaultEc2MetadataClient } from './clients/ec2MetadataClient'
-import { extensionVersion, getCodeCatalystDevEnvId } from './vscode/env'
-import { DevSettings } from './settings'
+import { extensionVersion, getCodeCatalystDevEnvId, hasSageMakerEnvVars } from './vscode/env'
 import globals from './extensionGlobals'
 import { once } from './utilities/functionUtils'
 import {
@@ -23,13 +22,16 @@ import {
     samDeployDocUrl,
     samInitDocUrl,
 } from './constants'
+import {
+    cloud9Appname,
+    cloud9CnAppname,
+    sageMakerAppname,
+    sageMakerUnifiedStudio,
+    vscodeAppname,
+} from './vscode/constants'
 
 const localize = nls.loadMessageBundle()
 
-const vscodeAppname = 'Visual Studio Code'
-const cloud9Appname = 'AWS Cloud9'
-const cloud9CnAppname = 'Amazon Cloud9'
-const sageMakerAppname = 'SageMaker Code Editor'
 const notInitialized = 'notInitialized'
 
 function _isAmazonQ() {
@@ -49,6 +51,13 @@ export function productName() {
     return isAmazonQ() ? 'Amazon Q' : `${getIdeProperties().company} Toolkit`
 }
 
+/** Gets the client name stored in oidc */
+export const oidcClientName = once(_oidcClientName)
+function _oidcClientName() {
+    const companyName = getIdeProperties().company
+    return isCloud9() ? `${companyName} Cloud9` : `${companyName} IDE Extensions for VSCode`
+}
+
 export const getExtensionId = () => {
     return isAmazonQ() ? VSCODE_EXTENSION_ID.amazonq : VSCODE_EXTENSION_ID.awstoolkit
 }
@@ -59,14 +68,11 @@ export function commandsPrefix(): string {
 }
 
 let computeRegion: string | undefined = notInitialized
+let serviceName: string = notInitialized
+let isSMUS: boolean = false
 
 export function getIdeType(): 'vscode' | 'cloud9' | 'sagemaker' | 'unknown' {
-    const settings = DevSettings.instance
-    if (
-        vscode.env.appName === cloud9Appname ||
-        vscode.env.appName === cloud9CnAppname ||
-        settings.get('forceCloud9', false)
-    ) {
+    if (vscode.env.appName === cloud9Appname || vscode.env.appName === cloud9CnAppname) {
         return 'cloud9'
     }
 
@@ -145,6 +151,27 @@ function createCloud9Properties(company: string): IdeProperties {
 }
 
 /**
+ * export method - for testing purposes only
+ * @internal
+ */
+export function isSageMakerUnifiedStudio(): boolean {
+    if (serviceName === notInitialized) {
+        serviceName = process.env.SERVICE_NAME ?? ''
+        isSMUS = serviceName === sageMakerUnifiedStudio
+    }
+    return isSMUS
+}
+
+/**
+ * Reset cached SageMaker state - for testing purposes only
+ * @internal
+ */
+export function resetSageMakerState(): void {
+    serviceName = notInitialized
+    isSMUS = false
+}
+
+/**
  * Decides if the current system is (the specified flavor of) Cloud9.
  */
 export function isCloud9(flavor: 'classic' | 'codecatalyst' | 'any' = 'any'): boolean {
@@ -156,12 +183,41 @@ export function isCloud9(flavor: 'classic' | 'codecatalyst' | 'any' = 'any'): bo
     return (flavor === 'classic' && !codecat) || (flavor === 'codecatalyst' && codecat)
 }
 
-export function isSageMaker(): boolean {
-    return vscode.env.appName === sageMakerAppname
+/**
+ *
+ * @param appName to identify the proper SM instance
+ * @returns true if the current system is SageMaker(SMAI or SMUS)
+ */
+export function isSageMaker(appName: 'SMAI' | 'SMUS' = 'SMAI'): boolean {
+    // Check for SageMaker-specific environment variables first
+    let hasSMEnvVars: boolean = false
+    if (hasSageMakerEnvVars()) {
+        getLogger().debug('SageMaker environment detected via environment variables')
+        hasSMEnvVars = true
+    }
+
+    switch (appName) {
+        case 'SMAI':
+            return vscode.env.appName === sageMakerAppname && hasSMEnvVars
+        case 'SMUS':
+            return vscode.env.appName === sageMakerAppname && isSageMakerUnifiedStudio() && hasSMEnvVars
+        default:
+            return false
+    }
 }
 
 export function isCn(): boolean {
-    return getComputeRegion()?.startsWith('cn') ?? false
+    try {
+        const region = getComputeRegion()
+        if (!region || region === 'notInitialized') {
+            getLogger().debug('isCn called before compute region initialized, defaulting to false')
+            return false
+        }
+        return region.startsWith('cn')
+    } catch (err) {
+        getLogger().error(`Error in isCn method: ${err}`)
+        return false
+    }
 }
 
 /**
@@ -379,13 +435,13 @@ export class UserActivity implements vscode.Disposable {
         )
 
         if (customEvents) {
-            customEvents.forEach((event) =>
+            for (const event of customEvents) {
                 this.register(
                     event(() => {
                         throttledEmit(event)
                     })
                 )
-            )
+            }
         } else {
             this.registerAllEvents(throttledEmit)
         }
@@ -409,13 +465,13 @@ export class UserActivity implements vscode.Disposable {
             vscode.window.onDidChangeTextEditorViewColumn,
         ]
 
-        activityEvents.forEach((event) =>
+        for (const event of activityEvents) {
             this.register(
                 event(() => {
                     throttledEmit(event)
                 })
             )
-        )
+        }
 
         //
         // Events with special cases:
@@ -478,6 +534,8 @@ export class UserActivity implements vscode.Disposable {
     }
 
     dispose() {
-        this.disposables.forEach((d) => d.dispose())
+        for (const d of this.disposables) {
+            d.dispose()
+        }
     }
 }

@@ -48,6 +48,7 @@ interface SamInvokeVueData {
     showNameInput: boolean
     newTestEventName: string
     resourceData: ResourceData | undefined
+    useDebugger: boolean
 }
 
 function newLaunchConfig(existingConfig?: AwsSamDebuggerConfiguration): AwsSamDebuggerConfigurationLoose {
@@ -112,6 +113,7 @@ function initData() {
     return {
         containerBuild: false,
         skipNewImageCheck: false,
+        useDebugger: true,
         launchConfig: newLaunchConfig(),
         payload: { value: '', errorMsg: '' },
         apiPayload: { value: '', errorMsg: '' },
@@ -268,7 +270,7 @@ export default defineComponent({
             if (!field) {
                 return undefined
             }
-            //Reg ex for a comma with 0 or more whitespace before and/or after
+            // Reg ex for a comma with 0 or more whitespace before and/or after
             const re = /\s*,\s*/g
             return field.trim().split(re)
         },
@@ -345,6 +347,11 @@ export default defineComponent({
                             this.launchConfig.invokeTarget.lambdaHandler = this.resourceData.handler
                             if (this.launchConfig.lambda) {
                                 this.launchConfig.lambda.runtime = this.resourceData.runtime
+                                if (this.resourceData.environment?.Variables !== undefined) {
+                                    this.environmentVariables.value = JSON.stringify(
+                                        this.resourceData.environment?.Variables
+                                    )
+                                }
                             }
                         }
                     },
@@ -444,13 +451,14 @@ export default defineComponent({
                           },
                       }
                     : undefined,
+                noDebug: !this.useDebugger,
             }
         },
         clearForm() {
             const init = initData()
-            Object.keys(init).forEach((k) => {
+            for (const k of Object.keys(init)) {
                 ;(this as any)[k] = init[k as keyof typeof init]
-            })
+            }
         },
     },
 })

@@ -9,7 +9,7 @@ any positive contribution. See [CONTRIBUTING.md](CONTRIBUTING.md) to get started
 
 [![Marketplace Version](https://img.shields.io/vscode-marketplace/v/AmazonWebServices.amazon-q-vscode.svg) ![Marketplace Downloads](https://img.shields.io/vscode-marketplace/d/AmazonWebServices.amazon-q-vscode.svg)](https://marketplace.visualstudio.com/items?itemName=AmazonWebServices.amazon-q-vscode)
 
-Amazon Q for VS Code is a [VS Code extension](https://marketplace.visualstudio.com/itemdetails?itemName=AmazonWebServices.aws-toolkit-vscode) for connecting your IDE to [Amazon Q](https://aws.amazon.com/q/developer/) and leveraging generative AI to accelerate your software development.
+Amazon Q for VS Code is a [VS Code extension](https://marketplace.visualstudio.com/items?itemName=AmazonWebServices.amazon-q-vscode) for connecting your IDE to [Amazon Q](https://aws.amazon.com/q/developer/) and leveraging generative AI to accelerate your software development.
 
 -   Code faster with inline code suggestions as you type
 -   Chat with [Amazon Q](https://aws.amazon.com/q/developer/) to generate code, explain code, and get answers to questions about software development
@@ -27,10 +27,11 @@ AWS Toolkit is a [VS Code extension](https://marketplace.visualstudio.com/itemde
 -   Connect with [IAM credentials](https://docs.aws.amazon.com/sdkref/latest/guide/access-users.html),
     [IAM Identity Center (SSO)](https://docs.aws.amazon.com/singlesignon/latest/userguide/what-is.html),
     or [AWS Builder ID](https://docs.aws.amazon.com/signin/latest/userguide/differences-aws_builder_id.html)
+-   Connect VSCode to your EC2 instances
 -   Connect to your [CodeCatalyst](https://codecatalyst.aws/) Dev Environments
 -   Debug your Lambda functions using [SAM CLI](https://github.com/aws/aws-sam-cli)
 -   Check and autocomplete code in SAM/CFN (CloudFormation) `template.yaml` files
--   `Open Terminal` on your ECS tasks
+-   `Open Terminal` on your EC2 instances or ECS tasks
 -   `Search Log Group` on your CloudWatch logs
 -   Browse your AWS resources
 

@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { sleep, Timeout } from './timeoutUtils'
+import { CircularBuffer } from './collectionUtils'
+import { Timeout } from './timeoutUtils'
 
 /**
  * Creates a function that always returns a 'shared' Promise.
@@ -85,38 +86,31 @@ export function memoize<T, U extends any[]>(fn: (...args: U) => T): (...args: U)
  * Multiple calls made during the debounce window will receive references to the
  * same Promise similar to {@link shared}. The window will also be 'rolled', delaying
  * the execution by another {@link delay} milliseconds.
+ *
+ * This function prevents execution until {@link delay} milliseconds have passed
+ * since the last invocation regardless of arguments. If this should be
+ * argument dependent, look into {@link keyedDebounce}
  */
-export function debounce<T>(cb: () => T | Promise<T>, delay: number = 0): () => Promise<T> {
-    let timeout: Timeout | undefined
-    let promise: Promise<T> | undefined
-
-    return () => {
-        timeout?.refresh()
-
-        return (promise ??= new Promise<T>((resolve, reject) => {
-            timeout = new Timeout(delay)
-            timeout.onCompletion(async () => {
-                timeout = promise = undefined
-                try {
-                    resolve(await cb())
-                } catch (err) {
-                    reject(err)
-                }
-            })
-        }))
-    }
+export function debounce<Input extends any[], Output>(
+    cb: (...args: Input) => Output | Promise<Output>,
+    delay: number = 0,
+    useLastCall: boolean = false
+): (...args: Input) => Promise<Output> {
+    return cancellableDebounce(cb, delay, useLastCall).promise
 }
 
 /**
  *
- * Similar to {@link debounce}, but allows the function to be cancelled and allow callbacks to pass function parameters.
+ * Similar to {@link debounce}, but allows the function to be cancelled.
  */
-export function cancellableDebounce<T, U extends any[]>(
-    cb: (...args: U) => T | Promise<T>,
-    delay: number = 0
-): { promise: (...args: U) => Promise<T>; cancel: () => void } {
+export function cancellableDebounce<Input extends any[], Output>(
+    cb: (...args: Input) => Output | Promise<Output>,
+    delay: number = 0,
+    useLastCall: boolean = false
+): { promise: (...args: Input) => Promise<Output>; cancel: () => void } {
     let timeout: Timeout | undefined
-    let promise: Promise<T> | undefined
+    let promise: Promise<Output> | undefined
+    let lastestArgs: Input | undefined
 
     const cancel = (): void => {
         if (timeout) {
@@ -127,15 +121,17 @@ export function cancellableDebounce<T, U extends any[]>(
     }
 
     return {
-        promise: (...arg) => {
+        promise: (...args: Input) => {
+            lastestArgs = args
             timeout?.refresh()
 
-            return (promise ??= new Promise<T>((resolve, reject) => {
+            return (promise ??= new Promise<Output>((resolve, reject) => {
                 timeout = new Timeout(delay)
                 timeout.onCompletion(async () => {
                     timeout = promise = undefined
                     try {
-                        resolve(await cb(...arg))
+                        const argsToUse = useLastCall ? lastestArgs! : args
+                        resolve(await cb(...argsToUse))
                     } catch (err) {
                         reject(err)
                     }
@@ -147,32 +143,62 @@ export function cancellableDebounce<T, U extends any[]>(
 }
 
 /**
- * Executes the given function, retrying if it throws.
  *
- * @param opts - if no opts given, defaults are used
+ * Similar to {@link debounce}, but uses a key to determine if the function should be called yet rather than a timeout connected to the function itself.
  */
-export async function withRetries<T>(
-    fn: () => Promise<T>,
-    opts?: { maxRetries?: number; delay?: number; backoff?: number }
-): Promise<T> {
-    const maxRetries = opts?.maxRetries ?? 3
-    const delay = opts?.delay ?? 0
-    const backoff = opts?.backoff ?? 1
+export function keyedDebounce<T, U extends any[], K extends string = string>(
+    fn: (key: K, ...args: U) => Promise<T>
+): typeof fn {
+    const pending = new Map<K, Promise<T>>()
 
-    let retryCount = 0
-    let latestDelay = delay
-    while (true) {
-        try {
-            return await fn()
-        } catch (err) {
-            retryCount++
-            if (retryCount >= maxRetries) {
-                throw err
-            }
-            if (latestDelay > 0) {
-                await sleep(latestDelay)
-                latestDelay = latestDelay * backoff
-            }
+    return (key, ...args) => {
+        if (pending.has(key)) {
+            return pending.get(key)!
         }
+
+        const promise = fn(key, ...args).finally(() => pending.delete(key))
+        pending.set(key, promise)
+
+        return promise
+    }
+}
+/**
+ * Creates a function that runs only for unique arguments that haven't been seen before.
+ *
+ * This utility tracks all unique inputs it has seen and only executes the callback
+ * for new inputs. Unlike `onceChanged` which only compares with the previous invocation,
+ * this function maintains a history of all arguments it has processed.
+ *
+ * @param fn The function to execute for unique arguments
+ * @param key A function that returns a unique string for each argument set, defaults to joining with ":" seperating
+ * @param overflow The maximum number of unique arguments to store.
+ * @returns A wrapped function that only executes for new unique arguments
+ *
+ * @example
+ * ```ts
+ * const logOnce = oncePerUniqueArg((message) => console.log(message))
+ *
+ * logOnce('hello') // prints: hello
+ * logOnce('world') // prints: world
+ * logOnce('hello') // nothing happens (already seen)
+ * logOnce('test')  // prints: test
+ * ```
+ */
+export function oncePerUniqueArg<T, U extends any[]>(
+    fn: (...args: U) => T,
+    options?: { key?: (...args: U) => string; overflow?: number }
+): (...args: U) => T | undefined {
+    const seen = new CircularBuffer(options?.overflow ?? 1000)
+    const keyMap = options?.key ?? ((...args: U) => args.map(String).join(':'))
+
+    return (...args) => {
+        const signature = keyMap(...args)
+
+        if (!seen.contains(signature)) {
+            seen.add(signature)
+            return fn(...args)
+        }
+
+        return undefined
     }
 }

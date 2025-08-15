@@ -2,7 +2,9 @@
  * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
-import { Event as VSCodeEvent, Uri } from 'vscode'
+import * as path from 'path'
+import * as vscode from 'vscode'
+import { Event as VSCodeEvent, Uri, workspace, window, ViewColumn, Position, Selection } from 'vscode'
 import { EditorContextExtractor } from '../../editor/context/extractor'
 import { ChatSessionStorage } from '../../storages/chatSession'
 import { Messenger, MessengerResponseType, StaticTextResponseType } from './messenger/messenger'
@@ -26,8 +28,21 @@ import {
     FooterInfoLinkClick,
     ViewDiff,
     AcceptDiff,
+    QuickCommandGroupActionClick,
+    DocumentReference,
+    FileClick,
+    RelevantTextDocumentAddition,
+    TabBarButtonClick,
+    SaveChatMessage,
 } from './model'
-import { AppToWebViewMessageDispatcher } from '../../view/connector/connector'
+import {
+    AppToWebViewMessageDispatcher,
+    ContextSelectedMessage,
+    CustomFormActionMessage,
+    DetailedListActionClickMessage,
+    DetailedListFilterChangeMessage,
+    DetailedListItemSelectMessage,
+} from '../../view/connector/connector'
 import { MessagePublisher } from '../../../amazonq/messages/messagePublisher'
 import { MessageListener } from '../../../amazonq/messages/messageListener'
 import { EditorContentController } from '../../../amazonq/commons/controllers/contentController'
@@ -44,16 +59,29 @@ import { triggerPayloadToChatRequest } from './chatRequest/converter'
 import { AuthUtil } from '../../../codewhisperer/util/authUtil'
 import { openUrl } from '../../../shared/utilities/vsCodeUtils'
 import { randomUUID } from '../../../shared/crypto'
-import { LspController } from '../../../amazonq/lsp/lspController'
 import { CodeWhispererSettings } from '../../../codewhisperer/util/codewhispererSettings'
 import { getSelectedCustomization } from '../../../codewhisperer/util/customizationUtil'
 import { getHttpStatusCode, AwsClientResponseError } from '../../../shared/errors'
 import { uiEventRecorder } from '../../../amazonq/util/eventRecorder'
-import { globals, waitUntil } from '../../../shared'
-import { telemetry } from '../../../shared/telemetry'
-import { Auth } from '../../../auth'
+import { telemetry } from '../../../shared/telemetry/telemetry'
 import { isSsoConnection } from '../../../auth/connection'
 import { inspect } from '../../../shared/utilities/collectionUtils'
+import { DefaultAmazonQAppInitContext } from '../../../amazonq/apps/initContext'
+import globals from '../../../shared/extensionGlobals'
+import { MynahIconsType, MynahUIDataModel, QuickActionCommand } from '@aws/mynah-ui'
+import { workspaceCommand } from '../../../amazonq/webview/ui/tabs/constants'
+import fs from '../../../shared/fs/fs'
+import { FeatureConfigProvider, Features } from '../../../shared/featureConfig'
+import { i18n } from '../../../shared/i18n-helper'
+import {
+    getUserPromptsDirectory,
+    promptFileExtension,
+    createSavedPromptCommandId,
+    defaultContextLengths,
+} from '../../constants'
+import { ChatSession } from '../../clients/chat/v0/chat'
+import { Database } from '../../../shared/db/chatDb/chatDb'
+import { TabBarController } from './tabBarController'
 
 export interface ChatControllerMessagePublishers {
     readonly processPromptChatMessage: MessagePublisher<PromptMessage>
@@ -73,6 +101,16 @@ export interface ChatControllerMessagePublishers {
     readonly processSourceLinkClick: MessagePublisher<SourceLinkClickMessage>
     readonly processResponseBodyLinkClick: MessagePublisher<ResponseBodyLinkClickMessage>
     readonly processFooterInfoLinkClick: MessagePublisher<FooterInfoLinkClick>
+    readonly processContextCommandUpdateMessage: MessagePublisher<void>
+    readonly processQuickCommandGroupActionClicked: MessagePublisher<QuickCommandGroupActionClick>
+    readonly processCustomFormAction: MessagePublisher<CustomFormActionMessage>
+    readonly processContextSelected: MessagePublisher<ContextSelectedMessage>
+    readonly processFileClick: MessagePublisher<FileClick>
+    readonly processTabBarButtonClick: MessagePublisher<TabBarButtonClick>
+    readonly processSaveChat: MessagePublisher<SaveChatMessage>
+    readonly processDetailedListFilterChangeMessage: MessagePublisher<DetailedListFilterChangeMessage>
+    readonly processDetailedListItemSelectMessage: MessagePublisher<DetailedListItemSelectMessage>
+    readonly processDetailedListActionClickMessage: MessagePublisher<DetailedListActionClickMessage>
 }
 
 export interface ChatControllerMessageListeners {
@@ -93,6 +131,16 @@ export interface ChatControllerMessageListeners {
     readonly processSourceLinkClick: MessageListener<SourceLinkClickMessage>
     readonly processResponseBodyLinkClick: MessageListener<ResponseBodyLinkClickMessage>
     readonly processFooterInfoLinkClick: MessageListener<FooterInfoLinkClick>
+    readonly processContextCommandUpdateMessage: MessageListener<void>
+    readonly processQuickCommandGroupActionClicked: MessageListener<QuickCommandGroupActionClick>
+    readonly processCustomFormAction: MessageListener<CustomFormActionMessage>
+    readonly processContextSelected: MessageListener<ContextSelectedMessage>
+    readonly processFileClick: MessageListener<FileClick>
+    readonly processTabBarButtonClick: MessageListener<TabBarButtonClick>
+    readonly processSaveChat: MessageListener<SaveChatMessage>
+    readonly processDetailedListFilterChangeMessage: MessageListener<DetailedListFilterChangeMessage>
+    readonly processDetailedListItemSelectMessage: MessageListener<DetailedListItemSelectMessage>
+    readonly processDetailedListActionClickMessage: MessageListener<DetailedListActionClickMessage>
 }
 
 export class ChatController {
@@ -101,9 +149,13 @@ export class ChatController {
     private readonly messenger: Messenger
     private readonly editorContextExtractor: EditorContextExtractor
     private readonly editorContentController: EditorContentController
+    private readonly tabBarController: TabBarController
     private readonly promptGenerator: PromptsGenerator
     private readonly userIntentRecognizer: UserIntentRecognizer
     private readonly telemetryHelper: CWCTelemetryHelper
+    private userPromptsWatcher: vscode.FileSystemWatcher | undefined
+    private chatHistoryDb = Database.getInstance()
+    private cancelTokenSource: vscode.CancellationTokenSource = new vscode.CancellationTokenSource()
 
     public constructor(
         private readonly chatControllerMessageListeners: ChatControllerMessageListeners,
@@ -121,6 +173,7 @@ export class ChatController {
         this.editorContentController = new EditorContentController()
         this.promptGenerator = new PromptsGenerator()
         this.userIntentRecognizer = new UserIntentRecognizer()
+        this.tabBarController = new TabBarController(this.messenger)
 
         onDidChangeAmazonQVisibility((visible) => {
             if (visible) {
@@ -128,6 +181,10 @@ export class ChatController {
             } else {
                 this.telemetryHelper.recordCloseChat()
             }
+        })
+
+        AuthUtil.instance.regionProfileManager.onDidChangeRegionProfile(() => {
+            this.cancelTokenSource.cancel()
         })
 
         this.chatControllerMessageListeners.processPromptChatMessage.onMessage((data) => {
@@ -210,6 +267,54 @@ export class ChatController {
         this.chatControllerMessageListeners.processFooterInfoLinkClick.onMessage((data) => {
             return this.processFooterInfoLinkClick(data)
         })
+        this.chatControllerMessageListeners.processContextCommandUpdateMessage.onMessage(() => {
+            return this.processContextCommandUpdateMessage()
+        })
+        this.chatControllerMessageListeners.processQuickCommandGroupActionClicked.onMessage((data) => {
+            return this.processQuickCommandGroupActionClicked(data)
+        })
+        this.chatControllerMessageListeners.processCustomFormAction.onMessage((data) => {
+            return this.processCustomFormAction(data)
+        })
+        this.chatControllerMessageListeners.processContextSelected.onMessage((data) => {
+            return this.processContextSelected(data)
+        })
+        this.chatControllerMessageListeners.processFileClick.onMessage((data) => {
+            return this.processFileClickMessage(data)
+        })
+        this.chatControllerMessageListeners.processTabBarButtonClick.onMessage((data) => {
+            return this.tabBarController.processTabBarButtonClick(data)
+        })
+        this.chatControllerMessageListeners.processSaveChat.onMessage((data) => {
+            return this.tabBarController.processSaveChat(data)
+        })
+        this.chatControllerMessageListeners.processDetailedListActionClickMessage.onMessage((data) => {
+            return this.tabBarController.processActionClickMessage(data)
+        })
+        this.chatControllerMessageListeners.processDetailedListFilterChangeMessage.onMessage((data) => {
+            return this.tabBarController.processFilterChangeMessage(data)
+        })
+        this.chatControllerMessageListeners.processDetailedListItemSelectMessage.onMessage((data) => {
+            return this.tabBarController.processItemSelectMessage(data)
+        })
+        AuthUtil.instance.regionProfileManager.onDidChangeRegionProfile(() => {
+            this.sessionStorage.deleteAllSessions()
+        })
+    }
+
+    private registerUserPromptsWatcher() {
+        if (this.userPromptsWatcher) {
+            return
+        }
+        this.userPromptsWatcher = vscode.workspace.createFileSystemWatcher(
+            new vscode.RelativePattern(vscode.Uri.file(getUserPromptsDirectory()), `*${promptFileExtension}`),
+            false,
+            true,
+            false
+        )
+        this.userPromptsWatcher.onDidCreate(() => this.processContextCommandUpdateMessage())
+        this.userPromptsWatcher.onDidDelete(() => this.processContextCommandUpdateMessage())
+        globals.context.subscriptions.push(this.userPromptsWatcher)
     }
 
     private processFooterInfoLinkClick(click: FooterInfoLinkClick) {
@@ -231,17 +336,19 @@ export class ChatController {
         this.openLinkInExternalBrowser(click)
     }
 
-    private processQuickActionCommand(quickActionCommand: ChatPromptCommandType) {
+    private processQuickActionCommand(message: PromptMessage) {
         this.editorContextExtractor
             .extractContextForTrigger('QuickAction')
             .then((context) => {
                 const triggerID = randomUUID()
 
+                const quickActionCommand = message.command as ChatPromptCommandType
+
                 this.messenger.sendQuickActionMessage(quickActionCommand, triggerID)
 
                 this.triggerEventsStorage.addTriggerEvent({
                     id: triggerID,
-                    tabID: undefined,
+                    tabID: message.tabID,
                     message: undefined,
                     type: 'quick_action',
                     quickAction: quickActionCommand,
@@ -328,6 +435,7 @@ export class ChatController {
         this.sessionStorage.deleteSession(message.tabID)
         this.triggerEventsStorage.removeTabEvents(message.tabID)
         // this.telemetryHelper.recordCloseChat(message.tabID)
+        this.chatHistoryDb.updateTabOpenState(message.tabID, false)
     }
 
     private async processTabChangedMessage(message: TabChangedMessage) {
@@ -346,6 +454,208 @@ export class ChatController {
                 this.telemetryHelper.recordExitFocusChat()
                 break
         }
+    }
+
+    private async processContextCommandUpdateMessage() {
+        // when UI is ready, refresh the context commands
+        this.tabBarController.loadChats()
+        this.registerUserPromptsWatcher()
+        const contextCommand: MynahUIDataModel['contextCommands'] = [
+            {
+                commands: [
+                    ...workspaceCommand.commands,
+                    {
+                        command: i18n('AWS.amazonq.context.folders.title'),
+                        children: [
+                            {
+                                groupName: i18n('AWS.amazonq.context.folders.title'),
+                                commands: [],
+                            },
+                        ],
+                        description: i18n('AWS.amazonq.context.folders.description'),
+                        icon: 'folder' as MynahIconsType,
+                    },
+                    {
+                        command: i18n('AWS.amazonq.context.files.title'),
+                        children: [
+                            {
+                                groupName: i18n('AWS.amazonq.context.files.title'),
+                                commands: [],
+                            },
+                        ],
+                        description: i18n('AWS.amazonq.context.files.description'),
+                        icon: 'file' as MynahIconsType,
+                    },
+                    {
+                        command: i18n('AWS.amazonq.context.code.title'),
+                        children: [
+                            {
+                                groupName: i18n('AWS.amazonq.context.code.title'),
+                                commands: [],
+                            },
+                        ],
+                        description: i18n('AWS.amazonq.context.code.description'),
+                        icon: 'code-block' as MynahIconsType,
+                    },
+                    {
+                        command: i18n('AWS.amazonq.context.prompts.title'),
+                        children: [
+                            {
+                                groupName: i18n('AWS.amazonq.context.prompts.title'),
+                                commands: [],
+                            },
+                        ],
+                        description: i18n('AWS.amazonq.context.prompts.description'),
+                        icon: 'magic' as MynahIconsType,
+                    },
+                ],
+            },
+        ]
+
+        const feature = FeatureConfigProvider.getFeature(Features.highlightCommand)
+        const commandName = feature?.value.stringValue
+        if (commandName) {
+            const commandDescription = feature.variation
+            contextCommand.push({
+                groupName: 'Additional Commands',
+                commands: [{ command: commandName, description: commandDescription }],
+            })
+        }
+        const promptsCmd: QuickActionCommand = contextCommand[0].commands?.[4]
+
+        // Check for user prompts
+        try {
+            const userPromptsDirectory = getUserPromptsDirectory()
+            const directoryExists = await fs.exists(userPromptsDirectory)
+            if (directoryExists) {
+                const systemPromptFiles = await fs.readdir(userPromptsDirectory)
+                promptsCmd.children?.[0].commands.push(
+                    ...systemPromptFiles
+                        .filter(([name]) => name.endsWith(promptFileExtension))
+                        .map(([name]) => ({
+                            command: path.basename(name, promptFileExtension),
+                            icon: 'magic' as MynahIconsType,
+                            id: 'prompt',
+                            // label: 'file' as ContextCommandItemType,
+                            route: [userPromptsDirectory, name],
+                        }))
+                )
+            }
+        } catch (e) {
+            getLogger().verbose(`Could not read prompts from ~/.aws/prompts: ${e}`)
+        }
+
+        // Add create prompt button to the bottom of the prompts list
+        promptsCmd.children?.[0].commands.push({
+            command: i18n('AWS.amazonq.savedPrompts.action'),
+            id: createSavedPromptCommandId,
+            icon: 'list-add' as MynahIconsType,
+        })
+
+        this.messenger.sendContextCommandData(contextCommand)
+    }
+
+    private handlePromptCreate(tabID: string) {
+        this.messenger.showCustomForm(
+            tabID,
+            [
+                {
+                    id: 'prompt-name',
+                    type: 'textinput',
+                    mandatory: true,
+                    autoFocus: true,
+                    title: i18n('AWS.amazonq.savedPrompts.title'),
+                    placeholder: i18n('AWS.amazonq.savedPrompts.placeholder'),
+                    description: i18n('AWS.amazonq.savedPrompts.description'),
+                },
+            ],
+            [
+                { id: 'cancel-create-prompt', text: i18n('AWS.generic.cancel'), status: 'clear' },
+                { id: 'submit-create-prompt', text: i18n('AWS.amazonq.savedPrompts.create'), status: 'main' },
+            ],
+            `Create a saved prompt`
+        )
+    }
+
+    private processQuickCommandGroupActionClicked(message: QuickCommandGroupActionClick) {
+        if (message.actionId === createSavedPromptCommandId) {
+            this.handlePromptCreate(message.tabID)
+        }
+    }
+
+    private async processCustomFormAction(message: CustomFormActionMessage) {
+        if (message.action.id === 'submit-create-prompt') {
+            const userPromptsDirectory = getUserPromptsDirectory()
+
+            const title = message.action.formItemValues?.['prompt-name']
+            const newFilePath = path.join(
+                userPromptsDirectory,
+                title ? `${title}${promptFileExtension}` : `default${promptFileExtension}`
+            )
+            const newFileContent = new Uint8Array(Buffer.from(''))
+            await fs.writeFile(newFilePath, newFileContent, { mode: 0o600 })
+            const newFileDoc = await vscode.workspace.openTextDocument(newFilePath)
+            await vscode.window.showTextDocument(newFileDoc)
+            telemetry.ui_click.emit({ elementId: 'amazonq_createSavedPrompt' })
+        }
+    }
+
+    private async processContextSelected(message: ContextSelectedMessage) {
+        if (message.tabID && message.contextItem.id === createSavedPromptCommandId) {
+            this.handlePromptCreate(message.tabID)
+        }
+    }
+    private async processFileClickMessage(message: FileClick) {
+        const session = this.sessionStorage.getSession(message.tabID)
+        const lineRanges = session.contexts.get(message.filePath)
+
+        if (!lineRanges) {
+            return
+        }
+
+        // Check if clicked file is in a different workspace root
+        const projectRoot =
+            session.relativePathToWorkspaceRoot.get(message.filePath) || workspace.workspaceFolders?.[0]?.uri.fsPath
+        if (!projectRoot) {
+            return
+        }
+        let absoluteFilePath = path.join(projectRoot, message.filePath)
+
+        // Handle clicking on a user prompt outside the workspace
+        if (message.filePath.endsWith(promptFileExtension)) {
+            try {
+                await vscode.workspace.fs.stat(vscode.Uri.file(absoluteFilePath))
+            } catch {
+                absoluteFilePath = path.join(getUserPromptsDirectory(), message.filePath)
+            }
+        }
+
+        try {
+            // Open the file in VSCode
+            const document = await workspace.openTextDocument(absoluteFilePath)
+            const editor = await window.showTextDocument(document, ViewColumn.Active)
+
+            // Create multiple selections based on line ranges
+            const selections: Selection[] = lineRanges
+                .filter(({ first, second }) => first !== -1 && second !== -1)
+                .map(({ first, second }) => {
+                    const startPosition = new Position(first - 1, 0) // Convert 1-based to 0-based
+                    const endPosition = new Position(second - 1, document.lineAt(second - 1).range.end.character)
+                    return new Selection(
+                        startPosition.line,
+                        startPosition.character,
+                        endPosition.line,
+                        endPosition.character
+                    )
+                })
+
+            // Apply multiple selections to the editor
+            if (selections.length > 0) {
+                editor.selection = selections[0] // Set the first selection as active
+                editor.selections = selections // Apply multiple selections
+                editor.revealRange(selections[0], vscode.TextEditorRevealType.InCenter)
+            }
+        } catch (error) {}
     }
 
     private processException(e: any, tabID: string) {
@@ -378,11 +688,20 @@ export class ChatController {
 
         this.editorContextExtractor
             .extractContextForTrigger('ContextMenu')
-            .then((context) => {
+            .then(async (context) => {
                 const triggerID = randomUUID()
+                if (command.type === 'aws.amazonq.generateUnitTests') {
+                    DefaultAmazonQAppInitContext.instance.getAppsToWebViewMessagePublisher().publish({
+                        sender: 'testChat',
+                        command: 'test',
+                        type: 'chatMessage',
+                    })
+                    // For non-supported languages, we'll just open the standard chat.
+                    return
+                }
 
                 if (context?.focusAreaContext?.codeBlock === undefined) {
-                    throw 'Sorry, we cannot help with the selected language code snippet'
+                    throw 'Sorry, I cannot help with the selected language code snippet'
                 }
 
                 const prompt = this.promptGenerator.generateForContextMenuCommand(command)
@@ -425,13 +744,22 @@ export class ChatController {
                         trigger: ChatTriggerType.ChatMessage,
                         query: undefined,
                         codeSelection: context?.focusAreaContext?.selectionInsideExtendedCodeBlock,
-                        fileText: context?.focusAreaContext?.extendedCodeBlock,
+                        fileText: context?.focusAreaContext?.extendedCodeBlock ?? '',
                         fileLanguage: context?.activeFileContext?.fileLanguage,
                         filePath: context?.activeFileContext?.filePath,
                         matchPolicy: context?.activeFileContext?.matchPolicy,
                         codeQuery: context?.focusAreaContext?.names,
                         userIntent: this.userIntentRecognizer.getFromContextMenuCommand(command),
                         customization: getSelectedCustomization(),
+                        profile: AuthUtil.instance.regionProfileManager.activeRegionProfile,
+                        additionalContents: [],
+                        relevantTextDocuments: [],
+                        documentReferences: [],
+                        useRelevantDocuments: false,
+                        contextLengths: {
+                            ...defaultContextLengths,
+                        },
+                        context: [],
                     },
                     triggerID
                 )
@@ -473,9 +801,10 @@ export class ChatController {
                 this.sessionStorage.deleteSession(message.tabID)
                 this.triggerEventsStorage.removeTabEvents(message.tabID)
                 recordTelemetryChatRunCommand('clear')
+                this.chatHistoryDb.clearTab(message.tabID)
                 return
             default:
-                this.processQuickActionCommand(message.command)
+                this.processQuickActionCommand(message)
         }
     }
 
@@ -498,17 +827,26 @@ export class ChatController {
 
             return this.generateResponse(
                 {
-                    message: message.message,
+                    message: message.message ?? '',
                     trigger: ChatTriggerType.ChatMessage,
                     query: message.message,
                     codeSelection: lastTriggerEvent.context?.focusAreaContext?.selectionInsideExtendedCodeBlock,
-                    fileText: lastTriggerEvent.context?.focusAreaContext?.extendedCodeBlock,
+                    fileText: lastTriggerEvent.context?.focusAreaContext?.extendedCodeBlock ?? '',
                     fileLanguage: lastTriggerEvent.context?.activeFileContext?.fileLanguage,
                     filePath: lastTriggerEvent.context?.activeFileContext?.filePath,
                     matchPolicy: lastTriggerEvent.context?.activeFileContext?.matchPolicy,
                     codeQuery: lastTriggerEvent.context?.focusAreaContext?.names,
                     userIntent: message.userIntent,
                     customization: getSelectedCustomization(),
+                    profile: AuthUtil.instance.regionProfileManager.activeRegionProfile,
+                    contextLengths: {
+                        ...defaultContextLengths,
+                    },
+                    relevantTextDocuments: [],
+                    additionalContents: [],
+                    documentReferences: [],
+                    useRelevantDocuments: false,
+                    context: [],
                 },
                 triggerID
             )
@@ -531,17 +869,26 @@ export class ChatController {
                 })
                 return this.generateResponse(
                     {
-                        message: message.message,
+                        message: message.message ?? '',
                         trigger: ChatTriggerType.ChatMessage,
                         query: message.message,
                         codeSelection: context?.focusAreaContext?.selectionInsideExtendedCodeBlock,
-                        fileText: context?.focusAreaContext?.extendedCodeBlock,
+                        fileText: context?.focusAreaContext?.extendedCodeBlock ?? '',
                         fileLanguage: context?.activeFileContext?.fileLanguage,
                         filePath: context?.activeFileContext?.filePath,
                         matchPolicy: context?.activeFileContext?.matchPolicy,
                         codeQuery: context?.focusAreaContext?.names,
                         userIntent: this.userIntentRecognizer.getFromPromptChatMessage(message),
                         customization: getSelectedCustomization(),
+                        profile: AuthUtil.instance.regionProfileManager.activeRegionProfile,
+                        context: message.context ?? [],
+                        relevantTextDocuments: [],
+                        additionalContents: [],
+                        documentReferences: [],
+                        useRelevantDocuments: false,
+                        contextLengths: {
+                            ...defaultContextLengths,
+                        },
                     },
                     triggerID
                 )
@@ -583,6 +930,75 @@ export class ChatController {
         this.messenger.sendStaticTextResponse(responseType, triggerID, tabID)
     }
 
+    /**
+     * @returns A Uri array of prompt files in each workspace root's .amazonq/rules directory
+     */
+    private async collectWorkspaceRules(): Promise<string[]> {
+        const rulesFiles: string[] = []
+
+        if (!vscode.workspace.workspaceFolders) {
+            return rulesFiles
+        }
+
+        for (const folder of vscode.workspace.workspaceFolders) {
+            const rulesPath = path.join(folder.uri.fsPath, '.amazonq', 'rules')
+            const folderExists = await fs.exists(rulesPath)
+
+            if (folderExists) {
+                const entries = await fs.readdir(rulesPath)
+
+                for (const [name, type] of entries) {
+                    if (type === vscode.FileType.File && name.endsWith(promptFileExtension)) {
+                        rulesFiles.push(path.join(rulesPath, name))
+                    }
+                }
+            }
+        }
+
+        return rulesFiles
+    }
+
+    private async resolveContextCommandPayload(triggerPayload: TriggerPayload, session: ChatSession) {
+        const contextCommands: any[] = []
+
+        // Check for workspace rules to add to context
+        const workspaceRules = await this.collectWorkspaceRules()
+        if (workspaceRules.length > 0) {
+            contextCommands.push(
+                ...workspaceRules.map((rule) => {
+                    const workspaceFolderPath =
+                        vscode.workspace.getWorkspaceFolder(vscode.Uri.parse(rule))?.uri?.path || ''
+                    return {
+                        workspaceFolder: workspaceFolderPath,
+                        type: 'file' as any,
+                        relativePath: path.relative(workspaceFolderPath, rule),
+                    }
+                })
+            )
+        }
+        triggerPayload.workspaceRulesCount = workspaceRules.length
+
+        for (const context of triggerPayload.context) {
+            if (typeof context !== 'string' && context.route && context.route.length === 2) {
+                contextCommands.push({
+                    workspaceFolder: context.route[0] || '',
+                    type: (context.label || '') as any,
+                    relativePath: context.route[1] || '',
+                    id: context.id,
+                })
+            }
+        }
+
+        if (contextCommands.length === 0) {
+            return []
+        }
+        const workspaceFolders = (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath)
+        if (!workspaceFolders) {
+            return []
+        }
+        workspaceFolders.sort()
+    }
+
     private async generateResponse(
         triggerPayload: TriggerPayload & { projectContextQueryLatencyMs?: number },
         triggerID: string
@@ -615,57 +1031,62 @@ export class ChatController {
             await this.messenger.sendAuthNeededExceptionMessage(credentialsState, tabID, triggerID)
             return
         }
-        triggerPayload.useRelevantDocuments = false
-        if (triggerPayload.message) {
-            triggerPayload.useRelevantDocuments = triggerPayload.message.includes(`@workspace`)
-            if (triggerPayload.useRelevantDocuments) {
-                triggerPayload.message = triggerPayload.message.replace(/@workspace/g, '')
-                if (CodeWhispererSettings.instance.isLocalIndexEnabled()) {
-                    const start = performance.now()
-                    triggerPayload.relevantTextDocuments = await LspController.instance.query(triggerPayload.message)
-                    triggerPayload.relevantTextDocuments.forEach((doc) => {
-                        getLogger().info(
-                            `amazonq: Using workspace files ${doc.relativeFilePath}, content(partial): ${doc.text?.substring(0, 200)}`
-                        )
-                    })
-                    triggerPayload.projectContextQueryLatencyMs = performance.now() - start
-                } else {
-                    this.messenger.sendOpenSettingsMessage(triggerID, tabID)
-                    return
-                }
-            }
-            // if user does not have @workspace in the prompt, but user is Amazon internal
-            // add project context by default
-            else if (
-                Auth.instance.isInternalAmazonUser() &&
-                !LspController.instance.isIndexingInProgress() &&
-                CodeWhispererSettings.instance.isLocalIndexEnabled()
-            ) {
-                const start = performance.now()
-                triggerPayload.relevantTextDocuments = await waitUntil(
-                    async function () {
-                        if (triggerPayload.message) {
-                            return await LspController.instance.query(triggerPayload.message)
-                        }
-                        return []
-                    },
-                    { timeout: 500, interval: 200, truthy: false }
-                )
-                triggerPayload.projectContextQueryLatencyMs = performance.now() - start
+
+        const session = this.sessionStorage.getSession(tabID)
+        if (!session.localHistoryHydrated) {
+            triggerPayload.history = this.chatHistoryDb.getMessages(triggerEvent.tabID, 10)
+            session.localHistoryHydrated = true
+        }
+        await this.resolveContextCommandPayload(triggerPayload, session)
+        triggerPayload.useRelevantDocuments = triggerPayload.context.some(
+            (context) => typeof context !== 'string' && context.command === '@workspace'
+        )
+        if (triggerPayload.useRelevantDocuments) {
+            triggerPayload.message = triggerPayload.message.replace(/@workspace/, '')
+            if (CodeWhispererSettings.instance.isLocalIndexEnabled()) {
+            } else {
+                this.messenger.sendOpenSettingsMessage(triggerID, tabID)
+                return
             }
         }
 
+        triggerPayload.contextLengths.userInputContextLength = triggerPayload.message.length
+        triggerPayload.contextLengths.focusFileContextLength = triggerPayload.fileText.length
         const request = triggerPayloadToChatRequest(triggerPayload)
-        const session = this.sessionStorage.getSession(tabID)
-        getLogger().info(
+        triggerPayload.documentReferences = this.mergeRelevantTextDocuments(triggerPayload.relevantTextDocuments)
+
+        // Update context transparency after it's truncated dynamically to show users only the context sent.
+        const relativePathsOfMergedRelevantDocuments = triggerPayload.documentReferences.map(
+            (doc) => doc.relativeFilePath
+        )
+        const seen: string[] = []
+        for (const additionalContent of triggerPayload.additionalContents) {
+            const relativePath = additionalContent.relativePath
+            if (!relativePathsOfMergedRelevantDocuments.includes(relativePath) && !seen.includes(relativePath)) {
+                triggerPayload.documentReferences.push({
+                    relativeFilePath: relativePath,
+                    lineRanges:
+                        additionalContent.name === 'symbol'
+                            ? [{ first: additionalContent.startLine, second: additionalContent.endLine }]
+                            : [{ first: -1, second: -1 }],
+                })
+                seen.push(relativePath)
+            }
+        }
+        for (const doc of triggerPayload.documentReferences) {
+            session.contexts.set(doc.relativeFilePath, doc.lineRanges)
+        }
+
+        getLogger().debug(
             `request from tab: ${tabID} conversationID: ${session.sessionIdentifier} request: ${inspect(request, {
                 depth: 12,
             })}`
         )
         let response: MessengerResponseType | undefined = undefined
         session.createNewTokenSource()
+        // TODO: onProfileChanged, abort previous response?
         try {
-            this.messenger.sendInitalStream(tabID, triggerID)
+            this.messenger.sendInitalStream(tabID, triggerID, triggerPayload.documentReferences)
             this.telemetryHelper.setConversationStreamStartTime(tabID)
             if (isSsoConnection(AuthUtil.instance.conn)) {
                 const { $metadata, generateAssistantResponseResponse } = await session.chatSso(request)
@@ -682,17 +1103,69 @@ export class ChatController {
             }
             this.telemetryHelper.recordEnterFocusConversation(triggerEvent.tabID)
             this.telemetryHelper.recordStartConversation(triggerEvent, triggerPayload)
+            if (session.sessionIdentifier) {
+                this.chatHistoryDb.addMessage(tabID, 'cwc', session.sessionIdentifier, {
+                    body: triggerPayload.message,
+                    type: 'prompt' as any,
+                })
+            }
 
             getLogger().info(
                 `response to tab: ${tabID} conversationID: ${session.sessionIdentifier} requestID: ${
                     response.$metadata.requestId
                 } metadata: ${inspect(response.$metadata, { depth: 12 })}`
             )
-            await this.messenger.sendAIResponse(response, session, tabID, triggerID, triggerPayload)
+            this.cancelTokenSource = new vscode.CancellationTokenSource()
+            await this.messenger.sendAIResponse(
+                response,
+                session,
+                tabID,
+                triggerID,
+                triggerPayload,
+                this.cancelTokenSource.token
+            )
         } catch (e: any) {
             this.telemetryHelper.recordMessageResponseError(triggerPayload, tabID, getHttpStatusCode(e) ?? 0)
             // clears session, record telemetry before this call
             this.processException(e, tabID)
         }
+    }
+
+    private mergeRelevantTextDocuments(documents: RelevantTextDocumentAddition[]): DocumentReference[] {
+        if (documents.length === 0) {
+            return []
+        }
+        return Object.entries(
+            documents.reduce<Record<string, { first: number; second: number }[]>>((acc, doc) => {
+                if (!doc.relativeFilePath || doc.startLine === undefined || doc.endLine === undefined) {
+                    return acc // Skip invalid documents
+                }
+
+                if (!acc[doc.relativeFilePath]) {
+                    acc[doc.relativeFilePath] = []
+                }
+                acc[doc.relativeFilePath].push({ first: doc.startLine, second: doc.endLine })
+                return acc
+            }, {})
+        ).map(([filePath, ranges]) => {
+            // Sort by startLine
+            const sortedRanges = ranges.sort((a, b) => a.first - b.first)
+
+            const mergedRanges: { first: number; second: number }[] = []
+            for (const { first, second } of sortedRanges) {
+                if (mergedRanges.length === 0 || mergedRanges[mergedRanges.length - 1].second < first - 1) {
+                    // If no overlap, add new range
+                    mergedRanges.push({ first, second })
+                } else {
+                    // Merge overlapping or consecutive ranges
+                    mergedRanges[mergedRanges.length - 1].second = Math.max(
+                        mergedRanges[mergedRanges.length - 1].second,
+                        second
+                    )
+                }
+            }
+
+            return { relativeFilePath: filePath, lineRanges: mergedRanges }
+        })
     }
 }

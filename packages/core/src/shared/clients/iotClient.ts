@@ -6,7 +6,7 @@
 import * as _ from 'lodash'
 import { Iot } from 'aws-sdk'
 import { parse } from '@aws-sdk/util-arn-parser'
-import { getLogger } from '../logger'
+import { getLogger } from '../logger/logger'
 import { InterfaceNoSymbol } from '../utilities/tsUtils'
 import globals from '../extensionGlobals'
 
@@ -26,7 +26,7 @@ export type IotPolicy = IotThing
 export type IotClient = InterfaceNoSymbol<DefaultIotClient>
 
 const iotServiceArn = 'iot'
-//Pattern to extract the certificate ID from the parsed ARN resource.
+// Pattern to extract the certificate ID from the parsed ARN resource.
 const certArnResourcePattern = /cert\/(\w+)/
 
 export interface ListThingCertificatesResponse {

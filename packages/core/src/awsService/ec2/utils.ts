@@ -3,19 +3,24 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { SafeEc2Instance } from '../../shared/clients/ec2Client'
+import { Ec2Instance } from '../../shared/clients/ec2'
 import { copyToClipboard } from '../../shared/utilities/messages'
 import { Ec2Selection } from './prompter'
 import { sshLogFileLocation } from '../../shared/sshConfig'
 import { SSM } from 'aws-sdk'
+import { getLogger } from '../../shared/logger/logger'
 
-export function getIconCode(instance: SafeEc2Instance) {
+export function getIconCode(instance: Ec2Instance) {
     if (instance.LastSeenStatus === 'running') {
         return 'pass'
     }
 
     if (instance.LastSeenStatus === 'stopped') {
         return 'circle-slash'
+    }
+
+    if (instance.LastSeenStatus === 'terminated') {
+        return 'stop'
     }
 
     return 'loading~spin'
@@ -38,6 +43,7 @@ export function getEc2SsmEnv(
             STREAM_URL: session.StreamUrl,
             SESSION_ID: session.SessionId,
             TOKEN: session.TokenValue,
+            DEBUG_LOG: getLogger().logLevelEnabled('debug') ? 1 : 0,
         },
         process.env
     )

@@ -14,6 +14,7 @@ import {
     HilZipManifest,
     IHilZipManifestParams,
     jobPlanProgress,
+    RegionProfile,
     sessionJobHistory,
     StepProgress,
     TransformationType,
@@ -22,7 +23,7 @@ import {
     TransformByQStoppedError,
     ZipManifest,
 } from '../../models/model'
-import { getLogger } from '../../../shared/logger'
+import { getLogger } from '../../../shared/logger/logger'
 import {
     CreateUploadUrlResponse,
     ProgressUpdates,
@@ -34,36 +35,30 @@ import {
 import { sleep } from '../../../shared/utilities/timeoutUtils'
 import AdmZip from 'adm-zip'
 import globals from '../../../shared/extensionGlobals'
-import { CredentialSourceId, telemetry } from '../../../shared/telemetry/telemetry'
+import { telemetry } from '../../../shared/telemetry/telemetry'
 import { CodeTransformTelemetryState } from '../../../amazonqGumby/telemetry/codeTransformTelemetryState'
 import { calculateTotalLatency } from '../../../amazonqGumby/telemetry/codeTransformTelemetry'
 import { MetadataResult } from '../../../shared/telemetry/telemetryClient'
 import request from '../../../shared/request'
-import { JobStoppedError, ZipExceedsSizeLimitError } from '../../../amazonqGumby/errors'
-import { writeLogs } from './transformFileHandler'
-import { AuthUtil } from '../../util/authUtil'
+import { JobStoppedError } from '../../../amazonqGumby/errors'
+import { createLocalBuildUploadZip, extractOriginalProjectSources, writeAndShowBuildLogs } from './transformFileHandler'
 import { createCodeWhispererChatStreamingClient } from '../../../shared/clients/codewhispererChatClient'
 import { downloadExportResultArchive } from '../../../shared/utilities/download'
-import { ExportIntent, TransformationDownloadArtifactType } from '@amzn/codewhisperer-streaming'
+import { ExportContext, ExportIntent, TransformationDownloadArtifactType } from '@amzn/codewhisperer-streaming'
 import fs from '../../../shared/fs/fs'
-import { ChatSessionManager } from '../../../amazonqGumby/chat/storages/chatSession'
 import { encodeHTML } from '../../../shared/utilities/textUtilities'
 import { convertToTimeString } from '../../../shared/datetime'
+import { getAuthType } from '../../../auth/utils'
+import { UserWrittenCodeTracker } from '../../tracker/userWrittenCodeTracker'
+import { setContext } from '../../../shared/vscode/setContext'
+import { AuthUtil } from '../../util/authUtil'
+import { DiffModel } from './transformationResultsViewProvider'
+import { spawnSync } from 'child_process' // eslint-disable-line no-restricted-imports
 
 export function getSha256(buffer: Buffer) {
     const hasher = crypto.createHash('sha256')
     hasher.update(buffer)
     return hasher.digest('base64')
-}
-
-export async function getAuthType() {
-    let authType: CredentialSourceId | undefined = undefined
-    if (AuthUtil.instance.isEnterpriseSsoInUse() && AuthUtil.instance.isConnectionValid()) {
-        authType = 'iamIdentityCenter'
-    } else if (AuthUtil.instance.isBuilderIdInUse() && AuthUtil.instance.isConnectionValid()) {
-        authType = 'awsId'
-    }
-    return authType
 }
 
 export function throwIfCancelled() {
@@ -113,18 +108,47 @@ export async function uploadArtifactToS3(
     try {
         const uploadFileByteSize = (await nodefs.promises.stat(fileName)).size
         getLogger().info(
-            `Uploading project artifact at %s with checksum %s using uploadId: %s and size %s kB`,
+            `CodeTransformation: Uploading project artifact at %s with checksum %s using uploadId: %s and size %s kB`,
             fileName,
             sha256,
             resp.uploadId,
             Math.round(uploadFileByteSize / 1000)
         )
 
-        const response = await request.fetch('PUT', resp.uploadUrl, {
-            body: buffer,
-            headers: getHeadersObj(sha256, resp.kmsKeyArn),
-        }).response
-        getLogger().info(`CodeTransformation: Status from S3 Upload = ${response.status}`)
+        let response = undefined
+        /* The existing S3 client has built-in retries but it requires the bucket name, so until
+         * CreateUploadUrl can be modified to return the S3 bucket name, manually implement retries.
+         * Alternatively, when waitUntil supports a fixed number of retries and retriableCodes, use that.
+         */
+        const retriableCodes = [408, 429, 500, 502, 503, 504]
+        for (let i = 0; i < 4; i++) {
+            try {
+                response = await request.fetch('PUT', resp.uploadUrl, {
+                    body: buffer,
+                    headers: getHeadersObj(sha256, resp.kmsKeyArn),
+                }).response
+                getLogger().info(`CodeTransformation: upload to S3 status on attempt ${i + 1}/4 = ${response.status}`)
+                if (response.status === 200) {
+                    break
+                }
+                throw new Error(
+                    `Upload failed, status = ${response.status}; full response: ${JSON.stringify(response)}`
+                )
+            } catch (e: any) {
+                if (response && !retriableCodes.includes(response.status)) {
+                    throw new Error(`Upload failed with status code = ${response.status}; did not automatically retry`)
+                }
+                if (i !== 3) {
+                    await sleep(1000 * Math.pow(2, i))
+                }
+            }
+        }
+        if (!response || response.status !== 200) {
+            const uploadFailedError = `Upload failed after up to 4 attempts with status code = ${response?.status ?? 'unavailable'}`
+            getLogger().error(`CodeTransformation: ${uploadFailedError}`)
+            throw new Error(uploadFailedError)
+        }
+        getLogger().info('CodeTransformation: Upload to S3 succeeded')
     } catch (e: any) {
         let errorMessage = `The upload failed due to: ${(e as Error).message}. For more information, see the [Amazon Q documentation](${CodeWhispererConstants.codeTransformTroubleshootUploadError})`
         if (errorMessage.includes('Request has expired')) {
@@ -145,13 +169,13 @@ export async function resumeTransformationJob(jobId: string, userActionStatus: T
             transformationJobId: jobId,
             userActionStatus, // can be "COMPLETED" or "REJECTED"
         })
-        if (response) {
-            // always store request ID, but it will only show up in a notification if an error occurs
-            return response.transformationStatus
-        }
+        getLogger().info(
+            `CodeTransformation: resumeTransformation API status code = ${response.$response.httpResponse.statusCode}`
+        )
+        return response.transformationStatus
     } catch (e: any) {
         const errorMessage = `Resuming the job failed due to: ${(e as Error).message}`
-        getLogger().error(`CodeTransformation: ResumeTransformation error = ${errorMessage}`)
+        getLogger().error(`CodeTransformation: ResumeTransformation error = %O`, e)
         throw new Error(errorMessage)
     }
 }
@@ -161,24 +185,23 @@ export async function stopJob(jobId: string) {
         return
     }
 
+    getLogger().info(`CodeTransformation: Stopping transformation job with ID: ${jobId}`)
+
     try {
-        const response = await codeWhisperer.codeWhispererClient.codeModernizerStopCodeTransformation({
+        await codeWhisperer.codeWhispererClient.codeModernizerStopCodeTransformation({
             transformationJobId: jobId,
         })
-        if (response !== undefined) {
-            // always store request ID, but it will only show up in a notification if an error occurs
-            if (response.$response.requestId) {
-                transformByQState.setJobFailureMetadata(` (request ID: ${response.$response.requestId})`)
-            }
-        }
     } catch (e: any) {
-        const errorMessage = (e as Error).message
-        getLogger().error(`CodeTransformation: StopTransformation error = ${errorMessage}`)
+        getLogger().error(`CodeTransformation: StopTransformation error = %O`, e)
         throw new Error('Stop job failed')
     }
 }
 
-export async function uploadPayload(payloadFileName: string, uploadContext?: UploadContext) {
+export async function uploadPayload(
+    payloadFileName: string,
+    profile: RegionProfile | undefined,
+    uploadContext?: UploadContext
+) {
     const buffer = Buffer.from(await fs.readFileBytes(payloadFileName))
     const sha256 = getSha256(buffer)
 
@@ -190,15 +213,15 @@ export async function uploadPayload(payloadFileName: string, uploadContext?: Upl
             contentChecksumType: CodeWhispererConstants.contentChecksumType,
             uploadIntent: CodeWhispererConstants.uploadIntent,
             uploadContext,
+            profileArn: profile?.arn,
         })
-        if (response.$response.requestId) {
-            transformByQState.setJobFailureMetadata(` (request ID: ${response.$response.requestId})`)
-        }
     } catch (e: any) {
-        const errorMessage = `The upload failed due to: ${(e as Error).message}`
-        getLogger().error(`CodeTransformation: CreateUploadUrl error: = ${e}`)
+        const errorMessage = `Creating the upload URL failed due to: ${(e as Error).message}`
+        getLogger().error(`CodeTransformation: CreateUploadUrl error: = %O`, e)
         throw new Error(errorMessage)
     }
+
+    getLogger().info('CodeTransformation: created upload URL successfully')
 
     try {
         await uploadArtifactToS3(payloadFileName, response, sha256, buffer)
@@ -232,6 +255,9 @@ export async function uploadPayload(payloadFileName: string, uploadContext?: Upl
  */
 const mavenExcludedExtensions = ['.repositories', '.sha1']
 
+// exclude .DS_Store (not relevant) and Maven executables (can cause permissions issues when building if user has not ran 'chmod')
+const sourceExcludedExtensions = ['.DS_Store', 'mvnw', 'mvnw.cmd']
+
 /**
  * Determines if the specified file path corresponds to a Maven metadata file
  * by checking against known metadata file extensions. This is used to identify
@@ -244,24 +270,22 @@ function isExcludedDependencyFile(path: string): boolean {
     return mavenExcludedExtensions.some((extension) => path.endsWith(extension))
 }
 
-/**
- * Gets all files in dir. We use this method to get the source code, then we run a mvn command to
- * copy over dependencies into their own folder, then we use this method again to get those
- * dependencies. If isDependenciesFolder is true, then we are getting all the files
- * of the dependencies which were copied over by the previously-run mvn command, in which case
- * we DO want to include any dependencies that may happen to be named "target", hence the check
- * in the first part of the IF statement. The point of excluding folders named target is that
- * "target" is also the name of the folder where .class files, large JARs, etc. are stored after
- * building, and we do not want these included in the ZIP so we exclude these when calling
- * getFilesRecursively on the source code folder.
- */
-function getFilesRecursively(dir: string, isDependenciesFolder: boolean): string[] {
+// do not zip the .DS_Store file as it may appear in the diff.patch
+function isExcludedSourceFile(path: string): boolean {
+    return sourceExcludedExtensions.some((extension) => path.endsWith(extension))
+}
+
+// zip all dependency files and all source files excluding "target" (contains large JARs) plus ".git" and ".idea" (may appear in diff.patch)
+export function getFilesRecursively(dir: string, isDependenciesFolder: boolean): string[] {
     const entries = nodefs.readdirSync(dir, { withFileTypes: true })
     const files = entries.flatMap((entry) => {
         const res = path.resolve(dir, entry.name)
-        // exclude 'target' directory from ZIP (except if zipping dependencies) due to issues in backend
         if (entry.isDirectory()) {
-            if (isDependenciesFolder || entry.name !== 'target') {
+            if (isDependenciesFolder) {
+                // include all dependency files
+                return getFilesRecursively(res, isDependenciesFolder)
+            } else if (entry.name !== 'target' && entry.name !== '.git' && entry.name !== '.idea') {
+                // exclude the above directories when zipping source code
                 return getFilesRecursively(res, isDependenciesFolder)
             } else {
                 return []
@@ -283,24 +307,20 @@ export function createZipManifest({ hilZipParams }: IZipManifestParams) {
 
 interface IZipCodeParams {
     dependenciesFolder?: FolderInfo
-    humanInTheLoopFlag?: boolean
     projectPath?: string
     zipManifest: ZipManifest | HilZipManifest
 }
 
 interface ZipCodeResult {
-    dependenciesCopied: boolean
     tempFilePath: string
     fileSize: number
 }
 
 export async function zipCode(
-    { dependenciesFolder, humanInTheLoopFlag, projectPath, zipManifest }: IZipCodeParams,
+    { dependenciesFolder, projectPath, zipManifest }: IZipCodeParams,
     zip: AdmZip = new AdmZip()
 ) {
     let tempFilePath = undefined
-    let logFilePath = undefined
-    let dependenciesCopied = false
     try {
         throwIfCancelled()
 
@@ -310,8 +330,8 @@ export async function zipCode(
             const sourceFiles = getFilesRecursively(projectPath, false)
             let sourceFilesSize = 0
             for (const file of sourceFiles) {
-                if (nodefs.statSync(file).isDirectory()) {
-                    getLogger().info('CodeTransformation: Skipping directory, likely a symlink')
+                if (nodefs.statSync(file).isDirectory() || isExcludedSourceFile(file)) {
+                    getLogger().info('CodeTransformation: Skipping file')
                     continue
                 }
                 const relativePath = path.relative(projectPath, file)
@@ -334,16 +354,12 @@ export async function zipCode(
                     target: transformByQState.getTargetDB(),
                     schema: transformByQState.getSchema(),
                     host: transformByQState.getSourceServerName(),
-                    sctFileName: metadataZip.getEntries().filter((entry) => entry.entryName.endsWith('.sct'))[0]
-                        .entryName,
+                    sctFileName: metadataZip.getEntries().filter((entry) => entry.name.endsWith('.sct'))[0].name,
                 },
             }
-            // TO-DO: later consider making this add to path.join(zipManifest.dependenciesRoot, 'qct-sct-metadata', entry.entryName) so that it's more organized
-            metadataZip
-                .getEntries()
-                .forEach((entry) =>
-                    zip.addFile(path.join(zipManifest.dependenciesRoot, entry.entryName), entry.getData())
-                )
+            for (const entry of metadataZip.getEntries()) {
+                zip.addFile(path.join(zipManifest.dependenciesRoot, entry.name), entry.getData())
+            }
             const sqlMetadataSize = (await nodefs.promises.stat(transformByQState.getMetadataPathSQL())).size
             getLogger().info(`CodeTransformation: SQL metadata file size = ${sqlMetadataSize}`)
         }
@@ -362,59 +378,51 @@ export async function zipCode(
                     continue
                 }
                 const relativePath = path.relative(dependenciesFolder.path, file)
-                // const paddedPath = path.join(`dependencies/${dependenciesFolder.name}`, relativePath)
-                const paddedPath = path.join(`dependencies/`, relativePath)
-                zip.addLocalFile(file, path.dirname(paddedPath))
+                if (relativePath.includes('compilations.json')) {
+                    let fileContents = await nodefs.promises.readFile(file, 'utf-8')
+                    if (os.platform() === 'win32') {
+                        fileContents = fileContents.replace(/\\\\/g, '/')
+                    }
+                    zip.addFile('compilations.json', Buffer.from(fileContents, 'utf-8'))
+                } else {
+                    zip.addLocalFile(file, path.dirname(relativePath))
+                }
                 dependencyFilesSize += (await nodefs.promises.stat(file)).size
             }
             getLogger().info(`CodeTransformation: dependency files size = ${dependencyFilesSize}`)
-            dependenciesCopied = true
+        }
+
+        if (transformByQState.getCustomDependencyVersionFilePath() && zipManifest instanceof ZipManifest) {
+            zip.addLocalFile(
+                transformByQState.getCustomDependencyVersionFilePath(),
+                'sources',
+                'dependency_upgrade.yml'
+            )
+            zipManifest.dependencyUpgradeConfigFile = 'dependency_upgrade.yml'
         }
 
         zip.addFile('manifest.json', Buffer.from(JSON.stringify(zipManifest)), 'utf-8')
 
         throwIfCancelled()
 
-        // add text file with logs from mvn clean install and mvn copy-dependencies
-        logFilePath = await writeLogs()
-        // We don't add build-logs.txt file to the manifest if we are
-        // uploading HIL artifacts
-        if (!humanInTheLoopFlag) {
-            zip.addLocalFile(logFilePath)
-        }
-
         tempFilePath = path.join(os.tmpdir(), 'zipped-code.zip')
         await fs.writeFile(tempFilePath, zip.toBuffer())
-        if (dependenciesFolder && (await fs.exists(dependenciesFolder.path))) {
+        if (dependenciesFolder?.path) {
             await fs.delete(dependenciesFolder.path, { recursive: true, force: true })
         }
     } catch (e: any) {
         getLogger().error(`CodeTransformation: zipCode error = ${e}`)
         throw Error('Failed to zip project')
-    } finally {
-        if (logFilePath) {
-            await fs.delete(logFilePath)
-        }
     }
 
-    const zipSize = (await nodefs.promises.stat(tempFilePath)).size
+    const fileSize = (await nodefs.promises.stat(tempFilePath)).size
 
-    const exceedsLimit = zipSize > CodeWhispererConstants.uploadZipSizeLimitInBytes
+    getLogger().info(`CodeTransformation: created ZIP of size ${fileSize} at ${tempFilePath}`)
 
-    getLogger().info(`CodeTransformation: created ZIP of size ${zipSize} at ${tempFilePath}`)
-
-    if (exceedsLimit) {
-        void vscode.window.showErrorMessage(CodeWhispererConstants.projectSizeTooLargeNotification)
-        transformByQState.getChatControllers()?.transformationFinished.fire({
-            message: CodeWhispererConstants.projectSizeTooLargeChatMessage,
-            tabID: ChatSessionManager.Instance.getSession().tabID,
-        })
-        throw new ZipExceedsSizeLimitError()
-    }
-    return { dependenciesCopied: dependenciesCopied, tempFilePath: tempFilePath, fileSize: zipSize } as ZipCodeResult
+    return { tempFilePath: tempFilePath, fileSize: fileSize } as ZipCodeResult
 }
 
-export async function startJob(uploadId: string) {
+export async function startJob(uploadId: string, profile: RegionProfile | undefined) {
     const sourceLanguageVersion = `JAVA_${transformByQState.getSourceJDKVersion()}`
     const targetLanguageVersion = `JAVA_${transformByQState.getTargetJDKVersion()}`
     try {
@@ -426,16 +434,15 @@ export async function startJob(uploadId: string) {
             transformationSpec: {
                 transformationType: CodeWhispererConstants.transformationType, // shared b/w language upgrades & sql conversions for now
                 source: { language: sourceLanguageVersion }, // dummy value of JDK8 used for SQL conversions just so that this API can be called
-                target: { language: targetLanguageVersion }, // always JDK17
+                target: { language: targetLanguageVersion }, // JAVA_17 or JAVA_21
             },
+            profileArn: profile?.arn,
         })
-        if (response.$response.requestId) {
-            transformByQState.setJobFailureMetadata(` (request ID: ${response.$response.requestId})`)
-        }
+        getLogger().info('CodeTransformation: called startJob API successfully')
         return response.transformationJobId
     } catch (e: any) {
         const errorMessage = `Starting the job failed due to: ${(e as Error).message}`
-        getLogger().error(`CodeTransformation: StartTransformation error = ${errorMessage}`)
+        getLogger().error(`CodeTransformation: StartTransformation error = %O`, e)
         throw new Error(errorMessage)
     }
 }
@@ -487,30 +494,57 @@ export function getFormattedString(s: string) {
     return CodeWhispererConstants.formattedStringMap.get(s) ?? s
 }
 
-export function addTableMarkdown(plan: string, stepId: string, tableMapping: { [key: string]: string }) {
-    const tableObj = tableMapping[stepId]
-    if (!tableObj) {
-        // no table present for this step
+export function addTableMarkdown(plan: string, stepId: string, tableMapping: { [key: string]: string[] }) {
+    const tableObjects = tableMapping[stepId]
+    if (!tableObjects || tableObjects.length === 0 || tableObjects.every((table: string) => table === '')) {
+        // no tables for this stepId
         return plan
     }
-    const table = JSON.parse(tableObj)
-    plan += `\n\n\n${table.name}\n|`
-    const columns = table.columnNames
+    const tables: any[] = []
+    // eslint-disable-next-line unicorn/no-array-for-each
+    tableObjects.forEach((tableObj: string) => {
+        try {
+            const table = JSON.parse(tableObj)
+            if (table) {
+                tables.push(table)
+            }
+        } catch (e) {
+            getLogger().error(`CodeTransformation: Failed to parse table JSON, skipping: ${e}`)
+        }
+    })
+
+    if (tables.every((table: any) => table.rows.length === 0)) {
+        // empty tables for this stepId
+        plan += `\n\nThere are no ${tables[0].name.toLowerCase()} to display.\n\n`
+        return plan
+    }
+    // table name and columns are shared, so only add to plan once
+    plan += `\n\n\n${tables[0].name}\n|`
+    const columns = tables[0].columnNames
+    // eslint-disable-next-line unicorn/no-array-for-each
     columns.forEach((columnName: string) => {
         plan += ` ${getFormattedString(columnName)} |`
     })
     plan += '\n|'
+    // eslint-disable-next-line unicorn/no-array-for-each
     columns.forEach((_: any) => {
         plan += '-----|'
     })
-    table.rows.forEach((row: any) => {
-        plan += '\n|'
-        columns.forEach((columnName: string) => {
-            if (columnName === 'relativePath') {
-                plan += ` [${row[columnName]}](${row[columnName]}) |` // add MD link only for files
-            } else {
-                plan += ` ${row[columnName]} |`
-            }
+    // add all rows of all tables
+    // eslint-disable-next-line unicorn/no-array-for-each
+    tables.forEach((table: any) => {
+        // eslint-disable-next-line unicorn/no-array-for-each
+        table.rows.forEach((row: any) => {
+            plan += '\n|'
+            // eslint-disable-next-line unicorn/no-array-for-each
+            columns.forEach((columnName: string) => {
+                if (columnName === 'relativePath') {
+                    // add markdown link only for file paths
+                    plan += ` [${row[columnName]}](${row[columnName]}) |`
+                } else {
+                    plan += ` ${row[columnName]} |`
+                }
+            })
         })
     })
     plan += '\n\n'
@@ -518,12 +552,14 @@ export function addTableMarkdown(plan: string, stepId: string, tableMapping: { [
 }
 
 export function getTableMapping(stepZeroProgressUpdates: ProgressUpdates) {
-    const map: { [key: string]: string } = {}
-    stepZeroProgressUpdates.forEach((update) => {
-        // description should never be undefined since even if no data we show an empty table
-        // but just in case, empty string allows us to skip this table without errors when rendering
-        map[update.name] = update.description ?? ''
-    })
+    const map: { [key: string]: string[] } = {}
+    for (const update of stepZeroProgressUpdates) {
+        if (!map[update.name]) {
+            map[update.name] = []
+        }
+        // empty string allows us to skip this table when rendering
+        map[update.name].push(update.description ?? '')
+    }
     return map
 }
 
@@ -533,24 +569,25 @@ export function getJobStatisticsHtml(jobStatistics: any) {
         return htmlString
     }
     htmlString += `<div style="flex: 1; margin-left: 20px; border: 1px solid #424750; border-radius: 8px; padding: 10px;">`
+    // eslint-disable-next-line unicorn/no-array-for-each
     jobStatistics.forEach((stat: { name: string; value: string }) => {
-        htmlString += `<p style="margin-bottom: 4px"><img src="${getTransformationIcon(
-            stat.name
-        )}" style="vertical-align: middle;"> ${getFormattedString(stat.name)}: ${stat.value}</p>`
+        if (stat.name === 'linesOfCode') {
+            htmlString += `<p style="margin-bottom: 4px"><img src="${getTransformationIcon(
+                stat.name
+            )}" style="vertical-align: middle;"> ${getFormattedString(stat.name)}: ${stat.value}</p>`
+        }
     })
     htmlString += `</div>`
     return htmlString
 }
 
-export async function getTransformationPlan(jobId: string) {
+export async function getTransformationPlan(jobId: string, profile: RegionProfile | undefined) {
     let response = undefined
     try {
         response = await codeWhisperer.codeWhispererClient.codeModernizerGetCodeTransformationPlan({
             transformationJobId: jobId,
+            profileArn: profile?.arn,
         })
-        if (response.$response.requestId) {
-            transformByQState.setJobFailureMetadata(` (request ID: ${response.$response.requestId})`)
-        }
 
         const stepZeroProgressUpdates = response.transformationPlan.transformationSteps[0].progressUpdates
 
@@ -562,7 +599,7 @@ export async function getTransformationPlan(jobId: string) {
         // gets a mapping between the ID ('name' field) of each progressUpdate (substep) and the associated table
         const tableMapping = getTableMapping(stepZeroProgressUpdates)
 
-        const jobStatistics = JSON.parse(tableMapping['0']).rows // ID of '0' reserved for job statistics table
+        const jobStatistics = JSON.parse(tableMapping['0'][0]).rows // ID of '0' reserved for job statistics table; only 1 table there
 
         // get logo directly since we only use one logo regardless of color theme
         const logoIcon = getTransformationIcon('transformLogo')
@@ -582,60 +619,53 @@ export async function getTransformationPlan(jobId: string) {
             CodeWhispererConstants.planIntroductionMessage
         }</p></div>${getJobStatisticsHtml(jobStatistics)}</div>`
         plan += `<div style="margin-top: 32px; border: 1px solid #424750; border-radius: 8px; padding: 10px;"><p style="font-size: 18px; margin-bottom: 4px;"><b>${CodeWhispererConstants.planHeaderMessage}</b></p><i>${CodeWhispererConstants.planDisclaimerMessage} <a href="https://docs.aws.amazon.com/amazonq/latest/qdeveloper-ug/code-transformation.html">Read more.</a></i><br><br>`
-        response.transformationPlan.transformationSteps.slice(1).forEach((step) => {
+        for (const step of response.transformationPlan.transformationSteps.slice(1)) {
             plan += `<div style="border: 1px solid #424750; border-radius: 8px; padding: 20px;"><div style="display:flex; justify-content:space-between; align-items:center;"><p style="font-size: 16px; margin-bottom: 4px;">${step.name}</p><a href="#top">Scroll to top <img src="${arrowIcon}" style="vertical-align: middle"></a></div><p>${step.description}</p>`
             plan = addTableMarkdown(plan, step.id, tableMapping)
             plan += `</div><br>`
-        })
+        }
         plan += `</div><br>`
-        plan += `<p style="font-size: 18px; margin-bottom: 4px;"><b>Appendix</b><br><a href="#top" style="float: right; font-size: 14px;">Scroll to top <img src="${arrowIcon}" style="vertical-align: middle;"></a></p><br>`
-        plan = addTableMarkdown(plan, '-1', tableMapping) // ID of '-1' reserved for appendix table
         return plan
     } catch (e: any) {
         const errorMessage = (e as Error).message
-        getLogger().error(`CodeTransformation: GetTransformationPlan error = ${errorMessage}`)
+        getLogger().error(`CodeTransformation: GetTransformationPlan error = %O`, e)
 
-        /* Means API call failed
-         * If response is defined, means a display/parsing error occurred, so continue transformation
-         */
+        // GetTransformationPlan API call failed, but if response is defined, a display/parsing error occurred, so continue transformation
         if (response === undefined) {
-            throw new Error('Get plan API call failed')
+            throw new Error(errorMessage)
         }
     }
 }
 
-export async function getTransformationSteps(jobId: string, handleThrottleFlag: boolean) {
+export async function getTransformationSteps(jobId: string, profile: RegionProfile | undefined) {
     try {
-        // prevent ThrottlingException
-        if (handleThrottleFlag) {
-            await sleep(2000)
-        }
         const response = await codeWhisperer.codeWhispererClient.codeModernizerGetCodeTransformationPlan({
             transformationJobId: jobId,
+            profileArn: profile?.arn,
         })
-        if (response.$response.requestId) {
-            transformByQState.setJobFailureMetadata(` (request ID: ${response.$response.requestId})`)
-        }
         return response.transformationPlan.transformationSteps.slice(1) // skip step 0 (contains supplemental info)
     } catch (e: any) {
-        const errorMessage = (e as Error).message
-        getLogger().error(`CodeTransformation: GetTransformationPlan error = ${errorMessage}`)
+        getLogger().error(`CodeTransformation: GetTransformationPlan error = %O`, e)
         throw e
     }
 }
 
-export async function pollTransformationJob(jobId: string, validStates: string[]) {
+export async function pollTransformationJob(jobId: string, validStates: string[], profile: RegionProfile | undefined) {
     let status: string = ''
-    let timer: number = 0
+    let isPlanComplete = false
     while (true) {
         throwIfCancelled()
         try {
             const response = await codeWhisperer.codeWhispererClient.codeModernizerGetCodeTransformation({
                 transformationJobId: jobId,
+                profileArn: profile?.arn,
             })
             status = response.transformationJob.status!
             if (CodeWhispererConstants.validStatesForBuildSucceeded.includes(status)) {
                 jobPlanProgress['buildCode'] = StepProgress.Succeeded
+            }
+            if (status === 'TRANSFORMING') {
+                transformByQState.setHasSeenTransforming(true)
             }
             // emit metric when job status changes
             if (status !== transformByQState.getPolledJobStatus()) {
@@ -648,20 +678,54 @@ export async function pollTransformationJob(jobId: string, validStates: string[]
                 })
             }
             transformByQState.setPolledJobStatus(status)
+            getLogger().info(`CodeTransformation: polled job status = ${status}`)
 
             const errorMessage = response.transformationJob.reason
             if (errorMessage !== undefined) {
+                getLogger().error(
+                    `CodeTransformation: GetTransformation returned transformation error reason = ${errorMessage}`
+                )
                 transformByQState.setJobFailureErrorChatMessage(
                     `${CodeWhispererConstants.failedToCompleteJobGenericChatMessage} ${errorMessage}`
                 )
                 transformByQState.setJobFailureErrorNotification(
                     `${CodeWhispererConstants.failedToCompleteJobGenericNotification} ${errorMessage}`
                 )
-                transformByQState.setJobFailureMetadata(` (request ID: ${response.$response.requestId})`)
             }
+
+            if (
+                CodeWhispererConstants.validStatesForPlanGenerated.includes(status) &&
+                transformByQState.getTransformationType() === TransformationType.LANGUAGE_UPGRADE &&
+                !isPlanComplete
+            ) {
+                const plan = await openTransformationPlan(jobId, profile)
+                if (plan?.toLowerCase().includes('dependency changes')) {
+                    // final plan is complete; show to user
+                    isPlanComplete = true
+                }
+                // for JDK upgrades without a YAML file, we show a static plan so no need to keep refreshing it
+                if (
+                    plan &&
+                    transformByQState.getSourceJDKVersion() !== transformByQState.getTargetJDKVersion() &&
+                    !transformByQState.getCustomDependencyVersionFilePath()
+                ) {
+                    isPlanComplete = true
+                }
+            }
+
             if (validStates.includes(status)) {
                 break
             }
+
+            // TO-DO: later, handle case where PlannerAgent needs to run mvn dependency:tree during PLANNING stage; not needed for now
+            if (
+                transformByQState.getHasSeenTransforming() &&
+                transformByQState.getTransformationType() === TransformationType.LANGUAGE_UPGRADE
+            ) {
+                // client-side build is N/A for SQL conversions
+                await attemptLocalBuild()
+            }
+
             /**
              * If we find a paused state, we need the user to take action. We will set the global
              * state for polling status and early exit.
@@ -675,25 +739,178 @@ export async function pollTransformationJob(jobId: string, validStates: string[]
              * is called, we break above on validStatesForCheckingDownloadUrl and check final status in finalizeTransformationJob
              */
             if (CodeWhispererConstants.failureStates.includes(status)) {
-                transformByQState.setJobFailureMetadata(` (request ID: ${response.$response.requestId})`)
-                throw new JobStoppedError(response.$response.requestId)
+                throw new JobStoppedError()
             }
             await sleep(CodeWhispererConstants.transformationJobPollingIntervalSeconds * 1000)
-            timer += CodeWhispererConstants.transformationJobPollingIntervalSeconds
-            if (timer > CodeWhispererConstants.transformationJobTimeoutSeconds) {
-                throw new Error('Job timed out')
-            }
         } catch (e: any) {
-            let errorMessage = (e as Error).message
-            errorMessage += ` -- ${transformByQState.getJobFailureMetadata()}`
-            getLogger().error(`CodeTransformation: GetTransformation error = ${errorMessage}`)
+            getLogger().error(`CodeTransformation: GetTransformation error = %O`, e)
             throw e
         }
     }
     return status
 }
 
-export function getArtifactsFromProgressUpdate(progressUpdate?: TransformationProgressUpdate) {
+async function openTransformationPlan(jobId: string, profile?: RegionProfile) {
+    let plan = undefined
+    try {
+        plan = await getTransformationPlan(jobId, profile)
+    } catch (error) {
+        // means API call failed
+        getLogger().error(`CodeTransformation: ${CodeWhispererConstants.failedToCompleteJobNotification}`, error)
+        transformByQState.setJobFailureErrorNotification(
+            `${CodeWhispererConstants.failedToGetPlanNotification} ${(error as Error).message}`
+        )
+        transformByQState.setJobFailureErrorChatMessage(
+            `${CodeWhispererConstants.failedToGetPlanChatMessage} ${(error as Error).message}`
+        )
+        throw new Error('Get plan failed')
+    }
+
+    if (plan) {
+        const planFilePath = path.join(transformByQState.getProjectPath(), 'transformation-plan.md')
+        nodefs.writeFileSync(planFilePath, plan)
+        await vscode.commands.executeCommand('markdown.showPreview', vscode.Uri.file(planFilePath))
+        transformByQState.setPlanFilePath(planFilePath)
+        await setContext('gumby.isPlanAvailable', true)
+    }
+    return plan
+}
+
+async function attemptLocalBuild() {
+    const jobId = transformByQState.getJobId()
+    let artifactId
+    try {
+        artifactId = await getClientInstructionArtifactId(jobId)
+        getLogger().info(`CodeTransformation: found artifactId = ${artifactId}`)
+    } catch (e: any) {
+        // don't throw error so that we can try to get progress updates again in next polling cycle
+        getLogger().error(`CodeTransformation: failed to get client instruction artifact ID = %O`, e)
+    }
+    if (artifactId) {
+        const clientInstructionsPath = await downloadClientInstructions(jobId, artifactId)
+        getLogger().info(
+            `CodeTransformation: downloaded clientInstructions with diff.patch at: ${clientInstructionsPath}`
+        )
+        await processClientInstructions(jobId, clientInstructionsPath, artifactId)
+    }
+}
+
+async function getClientInstructionArtifactId(jobId: string) {
+    const steps = await getTransformationSteps(jobId, AuthUtil.instance.regionProfileManager.activeRegionProfile)
+    const progressUpdate = findDownloadArtifactProgressUpdate(steps)
+
+    let artifactId = undefined
+    if (progressUpdate?.downloadArtifacts) {
+        artifactId = progressUpdate.downloadArtifacts[0].downloadArtifactId
+    }
+    return artifactId
+}
+
+async function downloadClientInstructions(jobId: string, artifactId: string) {
+    const exportDestination = `downloadClientInstructions_${jobId}_${artifactId}`
+    const exportZipPath = path.join(os.tmpdir(), exportDestination)
+
+    const exportContext: ExportContext = {
+        transformationExportContext: {
+            downloadArtifactType: TransformationDownloadArtifactType.CLIENT_INSTRUCTIONS,
+            downloadArtifactId: artifactId,
+        },
+    }
+
+    await downloadAndExtractResultArchive(jobId, exportZipPath, exportContext)
+    return path.join(exportZipPath, 'diff.patch')
+}
+
+async function processClientInstructions(jobId: string, clientInstructionsPath: any, artifactId: string) {
+    const destinationPath = path.join(os.tmpdir(), `originalCopy_${jobId}_${artifactId}`)
+    await extractOriginalProjectSources(destinationPath)
+    getLogger().info(`CodeTransformation: copied project to ${destinationPath}`)
+    const diffContents = await fs.readFileText(clientInstructionsPath)
+    if (diffContents.trim()) {
+        const diffModel = new DiffModel()
+        diffModel.parseDiff(clientInstructionsPath, path.join(destinationPath, 'sources'), true)
+        // show user the diff.patch
+        const doc = await vscode.workspace.openTextDocument(clientInstructionsPath)
+        await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.One })
+    } else {
+        // still need to set the project copy so that we can use it below
+        transformByQState.setProjectCopyFilePath(path.join(destinationPath, 'sources'))
+        getLogger().info(`CodeTransformation: diff.patch is empty`)
+    }
+    await runClientSideBuild(transformByQState.getProjectCopyFilePath(), artifactId)
+}
+
+export async function runClientSideBuild(projectCopyDir: string, clientInstructionArtifactId: string) {
+    const baseCommand = transformByQState.getMavenName()
+    const args = ['clean']
+    if (transformByQState.getCustomBuildCommand() === CodeWhispererConstants.skipUnitTestsBuildCommand) {
+        args.push('test-compile')
+    } else {
+        args.push('test')
+    }
+    const environment = { ...process.env, JAVA_HOME: transformByQState.getTargetJavaHome() }
+
+    const argString = args.join(' ')
+    const spawnResult = spawnSync(baseCommand, args, {
+        cwd: projectCopyDir,
+        shell: true,
+        encoding: 'utf-8',
+        env: environment,
+    })
+
+    const buildLogs = `Intermediate build result from running mvn ${argString}:\n\n${spawnResult.stdout}`
+    transformByQState.clearBuildLog()
+    transformByQState.appendToBuildLog(buildLogs)
+    await writeAndShowBuildLogs()
+
+    const uploadZipDir = path.join(
+        os.tmpdir(),
+        `clientInstructionsResult_${transformByQState.getJobId()}_${clientInstructionArtifactId}`
+    )
+    const uploadZipPath = await createLocalBuildUploadZip(uploadZipDir, spawnResult.status, spawnResult.stdout)
+
+    // upload build results
+    const uploadContext: UploadContext = {
+        transformationUploadContext: {
+            jobId: transformByQState.getJobId(),
+            uploadArtifactType: 'ClientBuildResult',
+        },
+    }
+    getLogger().info(`CodeTransformation: uploading client build results at ${uploadZipPath} and resuming job now`)
+    try {
+        await uploadPayload(uploadZipPath, AuthUtil.instance.regionProfileManager.activeRegionProfile, uploadContext)
+        await resumeTransformationJob(transformByQState.getJobId(), 'COMPLETED')
+    } catch (err: any) {
+        getLogger().error(`CodeTransformation: upload client build results / resumeTransformation error = %O`, err)
+        transformByQState.setJobFailureErrorChatMessage(
+            `${CodeWhispererConstants.failedToCompleteJobGenericChatMessage} ${err.message}`
+        )
+        transformByQState.setJobFailureErrorNotification(
+            `${CodeWhispererConstants.failedToCompleteJobGenericNotification} ${err.message}`
+        )
+        // in case server-side execution times out, still call resumeTransformationJob
+        if (err.message.includes('find a step in desired state:AWAITING_CLIENT_ACTION')) {
+            getLogger().info('CodeTransformation: resuming job after server-side execution timeout')
+            await resumeTransformationJob(transformByQState.getJobId(), 'COMPLETED')
+        } else {
+            throw err
+        }
+    } finally {
+        await fs.delete(projectCopyDir, { recursive: true })
+        await fs.delete(uploadZipDir, { recursive: true })
+        await fs.delete(uploadZipPath, { force: true })
+        const exportZipDir = path.join(
+            os.tmpdir(),
+            `downloadClientInstructions_${transformByQState.getJobId()}_${clientInstructionArtifactId}`
+        )
+        await fs.delete(exportZipDir, { recursive: true })
+        getLogger().info(
+            `CodeTransformation: deleted projectCopy, clientInstructionsResult, and downloadClientInstructions directories/files`
+        )
+    }
+}
+
+export function getArtifactsFromProgressUpdate(progressUpdate: TransformationProgressUpdate) {
     const artifactType = progressUpdate?.downloadArtifacts?.[0]?.downloadArtifactType
     const artifactId = progressUpdate?.downloadArtifacts?.[0]?.downloadArtifactId
     return {
@@ -702,6 +919,16 @@ export function getArtifactsFromProgressUpdate(progressUpdate?: TransformationPr
     }
 }
 
+// used for client-side build
+export function findDownloadArtifactProgressUpdate(transformationSteps: TransformationSteps) {
+    return transformationSteps
+        .flatMap((step) => step.progressUpdates ?? [])
+        .find(
+            (update) => update.status === 'AWAITING_CLIENT_ACTION' && update.downloadArtifacts?.[0]?.downloadArtifactId
+        )
+}
+
+// used for HIL
 export function findDownloadArtifactStep(transformationSteps: TransformationSteps) {
     for (let i = 0; i < transformationSteps.length; i++) {
         const progressUpdates = transformationSteps[i].progressUpdates
@@ -725,38 +952,39 @@ export function findDownloadArtifactStep(transformationSteps: TransformationStep
     }
 }
 
-export async function downloadResultArchive(
-    jobId: string,
-    downloadArtifactId: string | undefined,
-    pathToArchive: string,
-    downloadArtifactType: TransformationDownloadArtifactType
-) {
-    let downloadErrorMessage = undefined
+export async function downloadResultArchive(jobId: string, pathToArchive: string, exportContext?: ExportContext) {
     const cwStreamingClient = await createCodeWhispererChatStreamingClient()
 
     try {
+        const args = exportContext
+            ? {
+                  exportId: jobId,
+                  exportIntent: ExportIntent.TRANSFORMATION,
+                  exportContext: exportContext,
+              }
+            : {
+                  exportId: jobId,
+                  exportIntent: ExportIntent.TRANSFORMATION,
+              }
         await downloadExportResultArchive(
             cwStreamingClient,
-            {
-                exportId: jobId,
-                exportIntent: ExportIntent.TRANSFORMATION,
-            },
-            pathToArchive
+            args,
+            pathToArchive,
+            AuthUtil.instance.regionProfileManager.activeRegionProfile
         )
     } catch (e: any) {
-        downloadErrorMessage = (e as Error).message
-        getLogger().error(`CodeTransformation: ExportResultArchive error = ${downloadErrorMessage}`)
+        getLogger().error(`CodeTransformation: ExportResultArchive error = %O`, e)
         throw e
     } finally {
         cwStreamingClient.destroy()
+        UserWrittenCodeTracker.instance.onQFeatureInvoked()
     }
 }
 
 export async function downloadAndExtractResultArchive(
     jobId: string,
-    downloadArtifactId: string | undefined,
     pathToArchiveDir: string,
-    downloadArtifactType: TransformationDownloadArtifactType
+    exportContext?: ExportContext
 ) {
     const archivePathExists = await fs.existsDir(pathToArchiveDir)
     if (!archivePathExists) {
@@ -768,23 +996,19 @@ export async function downloadAndExtractResultArchive(
     let downloadErrorMessage = undefined
     try {
         // Download and deserialize the zip
-        await downloadResultArchive(jobId, downloadArtifactId, pathToArchive, downloadArtifactType)
+        await downloadResultArchive(jobId, pathToArchive, exportContext)
         const zip = new AdmZip(pathToArchive)
         zip.extractAllTo(pathToArchiveDir)
+        getLogger().info(`CodeTransformation: downloaded result archive to: ${pathToArchiveDir}`)
     } catch (e) {
         downloadErrorMessage = (e as Error).message
-        getLogger().error(`CodeTransformation: ExportResultArchive error = ${downloadErrorMessage}`)
+        getLogger().error(`CodeTransformation: ExportResultArchive error = %O`, e)
         throw new Error('Error downloading transformation result artifacts: ' + downloadErrorMessage)
     }
 }
 
 export async function downloadHilResultArchive(jobId: string, downloadArtifactId: string, pathToArchiveDir: string) {
-    await downloadAndExtractResultArchive(
-        jobId,
-        downloadArtifactId,
-        pathToArchiveDir,
-        TransformationDownloadArtifactType.CLIENT_INSTRUCTIONS
-    )
+    await downloadAndExtractResultArchive(jobId, pathToArchiveDir)
 
     // manifest.json
     // pomFolder/pom.xml or manifest has pomFolderName path

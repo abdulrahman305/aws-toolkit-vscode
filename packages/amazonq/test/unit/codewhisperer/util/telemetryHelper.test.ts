@@ -11,6 +11,7 @@ import {
     CodewhispererSuggestionState,
     CodewhispererUserDecision,
 } from 'aws-core-vscode/shared'
+import sinon from 'sinon'
 
 // TODO: improve and move the following test utils to codewhisperer/testUtils.ts
 function aUserDecision(
@@ -38,6 +39,47 @@ function aCompletion(): Completion {
 }
 
 describe('telemetryHelper', function () {
+    describe('clientComponentLatency', function () {
+        let sut: TelemetryHelper
+
+        beforeEach(function () {
+            sut = new TelemetryHelper()
+        })
+
+        afterEach(function () {
+            sinon.restore()
+        })
+
+        it('resetClientComponentLatencyTime should reset state variables', function () {
+            session.invokeSuggestionStartTime = 100
+            session.preprocessEndTime = 200
+            session.sdkApiCallStartTime = 300
+            session.fetchCredentialStartTime = 400
+            session.firstSuggestionShowTime = 500
+
+            sut.setSdkApiCallEndTime()
+            sut.setAllPaginationEndTime()
+            sut.setFirstResponseRequestId('aFakeRequestId')
+
+            sut.resetClientComponentLatencyTime()
+
+            assert.strictEqual(session.invokeSuggestionStartTime, 0)
+            assert.strictEqual(session.preprocessEndTime, 0)
+            assert.strictEqual(session.sdkApiCallStartTime, 0)
+            assert.strictEqual(session.fetchCredentialStartTime, 0)
+            assert.strictEqual(session.firstSuggestionShowTime, 0)
+            assert.strictEqual(sut.sdkApiCallEndTime, 0)
+            assert.strictEqual(sut.allPaginationEndTime, 0)
+            assert.strictEqual(sut.firstResponseRequestId, '')
+        })
+
+        it('setInvocationSuggestionStartTime should call resetClientComponentLatencyTime', function () {
+            const resetStub = sinon.stub(sut, 'resetClientComponentLatencyTime')
+            sut.setInvokeSuggestionStartTime()
+            assert.ok(resetStub.calledOnce)
+        })
+    })
+
     describe('aggregateUserDecisionByRequest', function () {
         let sut: TelemetryHelper
 
@@ -238,43 +280,6 @@ describe('telemetryHelper', function () {
         it('user event is Empty when recommendation state is Empty', function () {
             const actual = telemetryHelper.getSuggestionState(0, 1, new Map([[0, 'Empty']]))
             assert.strictEqual(actual, 'Empty')
-        })
-    })
-
-    describe('recordUserDecisionTelemetry', function () {
-        beforeEach(async function () {
-            await resetCodeWhispererGlobalVariables()
-        })
-
-        it('Should call telemetry record for each recommendations with proper arguments', async function () {
-            const telemetryHelper = new TelemetryHelper()
-            const response = [{ content: "print('Hello')" }]
-            const requestIdList = ['test_x', 'test_x', 'test_y']
-            const sessionId = 'test_x'
-            session.triggerType = 'AutoTrigger'
-            const assertTelemetry = assertTelemetryCurried('codewhisperer_userDecision')
-            const suggestionState = new Map<number, string>([[0, 'Showed']])
-            const completionTypes = new Map<number, CodewhispererCompletionType>([[0, 'Line']])
-            telemetryHelper.recordUserDecisionTelemetry(
-                requestIdList,
-                sessionId,
-                response,
-                0,
-                0,
-                completionTypes,
-                suggestionState
-            )
-            assertTelemetry({
-                codewhispererRequestId: 'test_x',
-                codewhispererSessionId: 'test_x',
-                codewhispererPaginationProgress: 0,
-                codewhispererTriggerType: 'AutoTrigger',
-                codewhispererSuggestionIndex: 0,
-                codewhispererSuggestionState: 'Accept',
-                codewhispererSuggestionReferenceCount: 0,
-                codewhispererCompletionType: 'Line',
-                codewhispererLanguage: 'python',
-            })
         })
     })
 })

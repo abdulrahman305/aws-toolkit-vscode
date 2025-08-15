@@ -13,6 +13,7 @@
         "./web": "./dist/src/extensionWeb.js",
         "./webShared": "./dist/src/extensionWebShared.js",
         "./amazonq": "./dist/src/amazonq/index.js",
+        "./amazonq/node": "./dist/src/amazonq/indexNode.js",
         "./codewhisperer": "./dist/src/codewhisperer/index.js",
         "./codewhisperer/node": "./dist/src/codewhisperer/indexNode.js",
         "./shared": "./dist/src/shared/index.js",
@@ -20,6 +21,9 @@
         "./auth": "./dist/src/auth/index.js",
         "./amazonqGumby": "./dist/src/amazonqGumby/index.js",
         "./amazonqFeatureDev": "./dist/src/amazonqFeatureDev/index.js",
+        "./amazonqDoc": "./dist/src/amazonqDoc/index.js",
+        "./amazonqScan": "./dist/src/amazonqScan/index.js",
+        "./amazonqTest": "./dist/src/amazonqTest/index.js",
         "./codewhispererChat": "./dist/src/codewhispererChat/index.js",
         "./test": "./dist/src/test/index.js",
         "./testWeb": "./dist/src/testWeb/index.js",
@@ -53,326 +57,389 @@
                     "fontCharacter": "\\f1ac"
                 }
             },
-            "aws-amazonq-transform-arrow-dark": {
+            "aws-amazonq-severity-critical": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1ad"
                 }
             },
-            "aws-amazonq-transform-arrow-light": {
+            "aws-amazonq-severity-high": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1ae"
                 }
             },
-            "aws-amazonq-transform-default-dark": {
+            "aws-amazonq-severity-info": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1af"
                 }
             },
-            "aws-amazonq-transform-default-light": {
+            "aws-amazonq-severity-low": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1b0"
                 }
             },
-            "aws-amazonq-transform-dependencies-dark": {
+            "aws-amazonq-severity-medium": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1b1"
                 }
             },
-            "aws-amazonq-transform-dependencies-light": {
+            "aws-amazonq-transform-arrow-dark": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1b2"
                 }
             },
-            "aws-amazonq-transform-file-dark": {
+            "aws-amazonq-transform-arrow-light": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1b3"
                 }
             },
-            "aws-amazonq-transform-file-light": {
+            "aws-amazonq-transform-default-dark": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1b4"
                 }
             },
-            "aws-amazonq-transform-logo": {
+            "aws-amazonq-transform-default-light": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1b5"
                 }
             },
-            "aws-amazonq-transform-step-into-dark": {
+            "aws-amazonq-transform-dependencies-dark": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1b6"
                 }
             },
-            "aws-amazonq-transform-step-into-light": {
+            "aws-amazonq-transform-dependencies-light": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1b7"
                 }
             },
-            "aws-amazonq-transform-variables-dark": {
+            "aws-amazonq-transform-file-dark": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1b8"
                 }
             },
-            "aws-amazonq-transform-variables-light": {
+            "aws-amazonq-transform-file-light": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1b9"
                 }
             },
-            "aws-applicationcomposer-icon": {
+            "aws-amazonq-transform-logo": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1ba"
                 }
             },
-            "aws-applicationcomposer-icon-dark": {
+            "aws-amazonq-transform-step-into-dark": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1bb"
                 }
             },
-            "aws-apprunner-service": {
+            "aws-amazonq-transform-step-into-light": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1bc"
                 }
             },
-            "aws-cdk-logo": {
+            "aws-amazonq-transform-variables-dark": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1bd"
                 }
             },
-            "aws-cloudformation-stack": {
+            "aws-amazonq-transform-variables-light": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1be"
                 }
             },
-            "aws-cloudwatch-log-group": {
+            "aws-applicationcomposer-icon": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1bf"
                 }
             },
-            "aws-codecatalyst-logo": {
+            "aws-applicationcomposer-icon-dark": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1c0"
                 }
             },
-            "aws-codewhisperer-icon-black": {
+            "aws-apprunner-service": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1c1"
                 }
             },
-            "aws-codewhisperer-icon-white": {
+            "aws-cdk-logo": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1c2"
                 }
             },
-            "aws-codewhisperer-learn": {
+            "aws-cloudformation-stack": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1c3"
                 }
             },
-            "aws-ecr-registry": {
+            "aws-cloudwatch-log-group": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1c4"
                 }
             },
-            "aws-ecs-cluster": {
+            "aws-codecatalyst-logo": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1c5"
                 }
             },
-            "aws-ecs-container": {
+            "aws-codewhisperer-icon-black": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1c6"
                 }
             },
-            "aws-ecs-service": {
+            "aws-codewhisperer-icon-white": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1c7"
                 }
             },
-            "aws-generic-attach-file": {
+            "aws-codewhisperer-learn": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1c8"
                 }
             },
-            "aws-iot-certificate": {
+            "aws-ecr-registry": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1c9"
                 }
             },
-            "aws-iot-policy": {
+            "aws-ecs-cluster": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1ca"
                 }
             },
-            "aws-iot-thing": {
+            "aws-ecs-container": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1cb"
                 }
             },
-            "aws-lambda-function": {
+            "aws-ecs-service": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1cc"
                 }
             },
-            "aws-mynah-MynahIconBlack": {
+            "aws-generic-attach-file": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1cd"
                 }
             },
-            "aws-mynah-MynahIconWhite": {
+            "aws-iot-certificate": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1ce"
                 }
             },
-            "aws-mynah-logo": {
+            "aws-iot-policy": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1cf"
                 }
             },
-            "aws-redshift-cluster": {
+            "aws-iot-thing": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1d0"
                 }
             },
-            "aws-redshift-cluster-connected": {
+            "aws-lambda-create-stack": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1d1"
                 }
             },
-            "aws-redshift-database": {
+            "aws-lambda-create-stack-light": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1d2"
                 }
             },
-            "aws-redshift-redshift-cluster-connected": {
+            "aws-lambda-function": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1d3"
                 }
             },
-            "aws-redshift-schema": {
+            "aws-mynah-MynahIconBlack": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1d4"
                 }
             },
-            "aws-redshift-table": {
+            "aws-mynah-MynahIconWhite": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1d5"
                 }
             },
-            "aws-s3-bucket": {
+            "aws-mynah-logo": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1d6"
                 }
             },
-            "aws-s3-create-bucket": {
+            "aws-redshift-cluster": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1d7"
                 }
             },
-            "aws-schemas-registry": {
+            "aws-redshift-cluster-connected": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1d8"
                 }
             },
-            "aws-schemas-schema": {
+            "aws-redshift-database": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1d9"
                 }
             },
-            "aws-stepfunctions-preview": {
+            "aws-redshift-redshift-cluster-connected": {
                 "description": "AWS Contributed Icon",
                 "default": {
                     "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
                     "fontCharacter": "\\f1da"
+                }
+            },
+            "aws-redshift-schema": {
+                "description": "AWS Contributed Icon",
+                "default": {
+                    "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
+                    "fontCharacter": "\\f1db"
+                }
+            },
+            "aws-redshift-table": {
+                "description": "AWS Contributed Icon",
+                "default": {
+                    "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
+                    "fontCharacter": "\\f1dc"
+                }
+            },
+            "aws-s3-bucket": {
+                "description": "AWS Contributed Icon",
+                "default": {
+                    "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
+                    "fontCharacter": "\\f1dd"
+                }
+            },
+            "aws-s3-create-bucket": {
+                "description": "AWS Contributed Icon",
+                "default": {
+                    "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
+                    "fontCharacter": "\\f1de"
+                }
+            },
+            "aws-sagemaker-code-editor": {
+                "description": "AWS Contributed Icon",
+                "default": {
+                    "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
+                    "fontCharacter": "\\f1df"
+                }
+            },
+            "aws-sagemaker-jupyter-lab": {
+                "description": "AWS Contributed Icon",
+                "default": {
+                    "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
+                    "fontCharacter": "\\f1e0"
+                }
+            },
+            "aws-schemas-registry": {
+                "description": "AWS Contributed Icon",
+                "default": {
+                    "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
+                    "fontCharacter": "\\f1e1"
+                }
+            },
+            "aws-schemas-schema": {
+                "description": "AWS Contributed Icon",
+                "default": {
+                    "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
+                    "fontCharacter": "\\f1e2"
+                }
+            },
+            "aws-stepfunctions-preview": {
+                "description": "AWS Contributed Icon",
+                "default": {
+                    "fontPath": "./resources/fonts/aws-toolkit-icons.woff",
+                    "fontCharacter": "\\f1e3"
                 }
             }
         }
@@ -386,9 +453,9 @@
         "compileOnly": "tsc -p ./",
         "compileDev": "npm run compile -- --mode development",
         "webpackDev": "webpack --mode development",
-        "serveVue": "webpack serve --config-name vue --mode development",
+        "serveVue": "ts-node ./scripts/build/checkServerPort.ts && webpack serve --port 8080 --config-name vue --mode development",
         "watch": "npm run clean && npm run buildScripts && npm run compileOnly -- --watch",
-        "lint": "ts-node ./scripts/lint/testLint.ts",
+        "lint": "node --max-old-space-size=8192 -r ts-node/register ./scripts/lint/testLint.ts",
         "generateClients": "ts-node ./scripts/build/generateServiceClient.ts ",
         "generateIcons": "ts-node ../../scripts/generateIcons.ts",
         "generateTelemetry": "node ../../node_modules/@aws-toolkits/telemetry/lib/generateTelemetry.js --extraInput=src/shared/telemetry/vscodeTelemetry.json --output=src/shared/telemetry/telemetry.gen.ts"
@@ -402,7 +469,10 @@
     },
     "devDependencies": {
         "@aws-sdk/types": "^3.13.1",
-        "@aws/fully-qualified-names": "^2.1.4",
+        "@aws/chat-client": "^0.1.4",
+        "@aws/chat-client-ui-types": "^0.1.47",
+        "@aws/language-server-runtimes": "^0.2.119",
+        "@aws/language-server-runtimes-types": "^0.1.47",
         "@cspotcode/source-map-support": "^0.8.1",
         "@sinonjs/fake-timers": "^10.0.2",
         "@types/adm-zip": "^0.4.34",
@@ -415,6 +485,7 @@
         "@types/js-yaml": "^4.0.5",
         "@types/jsdom": "^21.1.6",
         "@types/lodash": "^4.14.180",
+        "@types/lokijs": "^1.5.14",
         "@types/markdown-it": "^13.0.2",
         "@types/mime-types": "^2.1.4",
         "@types/mocha": "^10.0.6",
@@ -431,11 +502,11 @@
         "@types/uuid": "^9.0.1",
         "@types/whatwg-url": "^11.0.4",
         "@types/xml2js": "^0.4.11",
+        "@types/svgdom": "^0.1.2",
         "@vue/compiler-sfc": "^3.3.2",
         "c8": "^9.0.0",
         "circular-dependency-plugin": "^5.2.2",
         "css-loader": "^6.10.0",
-        "diff": "^5.1.0",
         "esbuild-loader": "2.20.0",
         "file-loader": "^6.2.0",
         "jsdom": "^23.0.1",
@@ -459,45 +530,68 @@
     "dependencies": {
         "@amzn/amazon-q-developer-streaming-client": "file:../../src.gen/@amzn/amazon-q-developer-streaming-client",
         "@amzn/codewhisperer-streaming": "file:../../src.gen/@amzn/codewhisperer-streaming",
-        "@aws-sdk/client-cognito-identity": "^3.637.0",
-        "@aws-sdk/client-lambda": "^3.637.0",
-        "@aws-sdk/client-cloudformation": "^3.667.0",
-        "@aws-sdk/client-sso": "^3.342.0",
-        "@aws-sdk/client-sso-oidc": "^3.574.0",
-        "@aws-sdk/credential-provider-ini": "3.46.0",
-        "@aws-sdk/credential-provider-process": "3.37.0",
-        "@aws-sdk/credential-provider-sso": "^3.345.0",
-        "@aws-sdk/property-provider": "3.46.0",
-        "@aws-sdk/smithy-client": "^3.46.0",
-        "@aws-sdk/util-arn-parser": "^3.46.0",
-        "@aws/mynah-ui": "^4.18.0",
+        "@amzn/sagemaker-client": "file:../../src.gen/@amzn/sagemaker-client/1.0.0.tgz",
+        "@aws-sdk/credential-providers": "<3.731.0",
+        "@aws-sdk/client-api-gateway": "<3.731.0",
+        "@aws-sdk/client-apprunner": "<3.731.0",
+        "@aws-sdk/client-cloudcontrol": "<3.731.0",
+        "@aws-sdk/client-cloudformation": "<3.731.0",
+        "@aws-sdk/client-cloudwatch-logs": "<3.731.0",
+        "@aws-sdk/client-codecatalyst": "<3.731.0",
+        "@aws-sdk/client-cognito-identity": "<3.731.0",
+        "@aws-sdk/client-docdb": "<3.731.0",
+        "@aws-sdk/client-docdb-elastic": "<3.731.0",
+        "@aws-sdk/client-ec2": "<3.731.0",
+        "@aws-sdk/client-iam": "<3.731.0",
+        "@aws-sdk/client-lambda": "<3.731.0",
+        "@aws-sdk/client-s3": "<3.731.0",
+        "@aws-sdk/client-sagemaker": "<3.696.0",
+        "@aws-sdk/client-ssm": "<3.731.0",
+        "@aws-sdk/client-sso": "<3.731.0",
+        "@aws-sdk/client-sso-oidc": "<3.731.0",
+        "@aws-sdk/client-sfn": "<3.731.0",
+        "@aws-sdk/credential-provider-env": "<3.731.0",
+        "@aws-sdk/credential-provider-process": "<3.731.0",
+        "@aws-sdk/credential-provider-sso": "<3.731.0",
+        "@aws-sdk/lib-storage": "<3.731.0",
+        "@aws-sdk/property-provider": "<3.731.0",
+        "@aws-sdk/protocol-http": "<3.731.0",
+        "@aws-sdk/s3-request-presigner": "<3.731.0",
+        "@aws-sdk/smithy-client": "<3.731.0",
+        "@aws-sdk/util-arn-parser": "<3.731.0",
+        "@aws/mynah-ui": "^4.35.4",
         "@gerhobbelt/gitignore-parser": "^0.2.0-9",
         "@iarna/toml": "^2.2.5",
-        "@smithy/middleware-retry": "^2.3.1",
-        "@smithy/protocol-http": "^3.3.0",
-        "@smithy/service-error-classification": "^2.1.5",
-        "@smithy/shared-ini-file-loader": "^2.2.8",
-        "@smithy/util-retry": "^2.2.0",
+        "@smithy/fetch-http-handler": "^5.0.1",
+        "@smithy/middleware-retry": "^4.0.3",
+        "@smithy/node-http-handler": "^4.0.2",
+        "@smithy/protocol-http": "^5.0.1",
+        "@smithy/service-error-classification": "^4.0.1",
+        "@smithy/shared-ini-file-loader": "^4.0.0",
+        "@smithy/util-retry": "^4.0.1",
         "@vscode/debugprotocol": "^1.57.0",
         "@zip.js/zip.js": "^2.7.41",
         "adm-zip": "^0.5.10",
-        "amazon-states-language-service": "^1.11.0",
+        "amazon-states-language-service": "^1.16.1",
         "async-lock": "^1.4.0",
-        "aws-sdk": "^2.1384.0",
+        "aws-sdk": "^2.1692.0",
         "aws-ssm-document-language-service": "^1.0.0",
         "bytes": "^3.1.2",
         "cross-fetch": "^4.0.0",
-        "cross-spawn": "^7.0.3",
+        "cross-spawn": "^7.0.5",
+        "diff": "^5.1.0",
         "fast-json-patch": "^3.1.1",
         "glob": "^10.3.10",
         "got": "^11.8.5",
         "highlight.js": "^11.9.0",
+        "http2": "^3.3.6",
         "i18n-ts": "^1.0.5",
         "immutable": "^4.3.0",
         "jose": "5.4.1",
         "js-yaml": "^4.1.0",
         "jsonc-parser": "^3.2.0",
         "lodash": "^4.17.21",
+        "lokijs": "^1.5.12",
         "markdown-it": "^13.0.2",
         "mime-types": "^2.1.32",
         "node-fetch": "^2.7.0",
@@ -515,8 +609,13 @@
         "whatwg-url": "^14.0.0",
         "winston": "^3.11.0",
         "winston-transport": "^4.6.0",
+        "ws": "^8.16.0",
         "xml2js": "^0.6.1",
-        "yaml-cfn": "^0.3.2"
+        "yaml-cfn": "^0.3.2",
+        "protobufjs": "^7.2.6",
+        "@svgdotjs/svg.js": "^3.0.16",
+        "svgdom": "^0.1.0",
+        "jaro-winkler": "^0.2.8"
     },
     "overrides": {
         "webfont": {

@@ -29,7 +29,6 @@ const tasks: CopyTask[] = [
     ...['LICENSE', 'NOTICE'].map((f) => {
         return { target: path.join('../../', f), destination: path.join(projectRoot, f) }
     }),
-
     { target: path.join('../core', 'resources'), destination: path.join('..', 'resources') },
     {
         target: path.join('../core/', 'package.nls.json'),
@@ -69,6 +68,34 @@ const tasks: CopyTask[] = [
         destination: path.join('src', 'stepFunctions', 'asl', 'aslServer.js'),
     },
 
+    // Sagemaker local server
+    {
+        target: path.join(
+            '../../node_modules',
+            'aws-core-vscode',
+            'dist',
+            'src',
+            'awsService',
+            'sagemaker',
+            'detached-server',
+            'server.js'
+        ),
+        destination: path.join('src', 'awsService', 'sagemaker', 'detached-server', 'server.js'),
+    },
+
+    // Serverless Land
+    {
+        target: path.join(
+            '../../node_modules/aws-core-vscode',
+            'src',
+            'awsService',
+            'appBuilder',
+            'serverlessLand',
+            'metadata.json'
+        ),
+        destination: path.join('src', 'serverlessLand', 'metadata.json'),
+    },
+
     // Vue
     {
         target: path.join('../core', 'resources', 'js', 'vscode.js'),
@@ -81,18 +108,6 @@ const tasks: CopyTask[] = [
     {
         target: path.join('../../node_modules/aws-core-vscode/dist', 'vue'),
         destination: 'vue/',
-    },
-
-    // Mynah
-    {
-        target: path.join(
-            '../../node_modules',
-            '@aws',
-            'fully-qualified-names',
-            'node',
-            'aws_fully_qualified_names_bg.wasm'
-        ),
-        destination: path.join('src', 'aws_fully_qualified_names_bg.wasm'),
     },
     {
         target: path.join('../../node_modules', 'web-tree-sitter', 'tree-sitter.wasm'),

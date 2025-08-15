@@ -26,7 +26,7 @@ import { GlobalState } from '../shared/globalState'
 import { FeatureConfigProvider } from '../shared/featureConfig'
 import { mockFeatureConfigsData } from './fake/mockFeatureConfigData'
 import { fs } from '../shared'
-import { promises as nodefs } from 'fs' //eslint-disable-line no-restricted-imports
+import { promises as nodefs } from 'fs' // eslint-disable-line no-restricted-imports
 
 disableAwsSdkWarning()
 const testReportDir = join(__dirname, '../../../../../.test-reports') // Root project, not subproject
@@ -165,6 +165,10 @@ async function writeLogsToFile(testName: string) {
     entries?.unshift(`=== Starting test "${testName}" ===`)
     entries?.push(`=== Ending test "${testName}" ===\n\n`)
     await fs.appendFile(testLogOutput, entries?.join('\n') ?? '')
+}
+
+export function assertLogsContainAllOf(keywords: string[], exactMatch: boolean, severity: LogLevel) {
+    return keywords.map((k) => assertLogsContain(k, exactMatch, severity))
 }
 
 // TODO: merge this with `toolkitLogger.test.ts:checkFile`

@@ -3,51 +3,46 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 import * as vscode from 'vscode'
-import { CloudFormation, S3 } from 'aws-sdk'
+import { S3Bucket } from '../../../shared/clients/s3'
 import { AppNode } from '../../../awsService/appBuilder/explorer/nodes/appNode'
 import { assertTelemetry, getWorkspaceFolder, TestFolder } from '../../testUtil'
-import {
-    BucketSource,
-    DeployParams,
-    DeployWizard,
-    ParamsSource,
-    getDeployWizard,
-    runDeploy,
-} from '../../../shared/sam/deploy'
-import * as UtilsModule from '../../../shared/sam/utils'
+import { DeployParams, DeployWizard, getDeployWizard, runDeploy } from '../../../shared/sam/deploy'
 import { globals, ToolkitError } from '../../../shared'
 import sinon from 'sinon'
 import { samconfigCompleteData, samconfigInvalidData, validTemplateData } from './samTestUtils'
-
+import * as SamUtilsModule from '../../../shared/sam/utils'
 import assert from 'assert'
 import { getTestWindow } from '../vscode/window'
-import { DefaultCloudFormationClient } from '../../../shared/clients/cloudFormationClient'
+import { CloudFormationClient } from '../../../shared/clients/cloudFormation'
 import { intoCollection } from '../../../shared/utilities/collectionUtils'
-import { PrompterTester } from '../wizards/prompterTester'
+import { clickBackButton, createPromptHandler, PrompterTester } from '../wizards/prompterTester'
 import { RegionNode } from '../../../awsexplorer/regionNode'
 import { createTestRegionProvider } from '../regions/testUtil'
-import { DefaultS3Client } from '../../../shared/clients/s3Client'
-import * as CloudFormationClientModule from '../../../shared/clients/cloudFormationClient'
-import * as S3ClientModule from '../../../shared/clients/s3Client'
+import { S3Client } from '../../../shared/clients/s3'
+import * as CloudFormationClientModule from '../../../shared/clients/cloudFormation'
+import * as S3ClientModule from '../../../shared/clients/s3'
 import * as ProcessUtilsModule from '../../../shared/utilities/processUtils'
 import * as ProcessTerminalModule from '../../../shared/sam/processTerminal'
 import * as ResolveEnvModule from '../../../shared/env/resolveEnv'
 import * as SamConfiModule from '../../../shared/sam/config'
-import { RequiredProps } from '../../../shared/utilities/tsUtils'
 import { UserAgent as __UserAgent } from '@smithy/types'
-import { TemplateItem } from '../../../shared/sam/sync'
+
 import { SamAppLocation } from '../../../awsService/appBuilder/explorer/samProject'
 import { CancellationError } from '../../../shared/utilities/timeoutUtils'
+import { TemplateItem } from '../../../shared/ui/sam/templatePrompter'
+import { ParamsSource } from '../../../shared/ui/sam/paramsSourcePrompter'
+import { BucketSource } from '../../../shared/ui/sam/bucketPrompter'
+import { TestInputBox, TestQuickPick } from '../vscode/quickInput'
 
-describe('DeployWizard', async function () {
+describe('SAM DeployWizard', async function () {
     let sandbox: sinon.SinonSandbox
     let testFolder: TestFolder
     let projectRoot: vscode.Uri
     let workspaceFolder: vscode.WorkspaceFolder
     let templateFile: vscode.Uri
 
-    let mockDefaultCFNClient: sinon.SinonStubbedInstance<DefaultCloudFormationClient>
-    let mockDefaultS3Client: sinon.SinonStubbedInstance<DefaultS3Client>
+    let mockDefaultCFNClient: sinon.SinonStubbedInstance<CloudFormationClient>
+    let mockDefaultS3Client: sinon.SinonStubbedInstance<S3Client>
 
     beforeEach(async () => {
         testFolder = await TestFolder.create()
@@ -56,13 +51,13 @@ describe('DeployWizard', async function () {
         sandbox = sinon.createSandbox()
 
         // Simulate return of deployed stacks
-        mockDefaultCFNClient = sandbox.createStubInstance(CloudFormationClientModule.DefaultCloudFormationClient)
-        sandbox.stub(CloudFormationClientModule, 'DefaultCloudFormationClient').returns(mockDefaultCFNClient)
+        mockDefaultCFNClient = sandbox.createStubInstance(CloudFormationClientModule.CloudFormationClient)
+        sandbox.stub(CloudFormationClientModule, 'CloudFormationClient').returns(mockDefaultCFNClient)
         mockDefaultCFNClient.listAllStacks.returns(intoCollection(stackSummaries))
 
         // Simulate return of list bucket
-        mockDefaultS3Client = sandbox.createStubInstance(S3ClientModule.DefaultS3Client)
-        sandbox.stub(S3ClientModule, 'DefaultS3Client').returns(mockDefaultS3Client)
+        mockDefaultS3Client = sandbox.createStubInstance(S3ClientModule.S3Client)
+        sandbox.stub(S3ClientModule, 'S3Client').returns(mockDefaultS3Client)
         mockDefaultS3Client.listBucketsIterable.returns(intoCollection(s3BucketListSummary))
 
         // generate template.yaml in temporary test folder and add to registery
@@ -94,13 +89,13 @@ describe('DeployWizard', async function () {
             await testFolder.write('samconfig.toml', samconfigInvalidData)
 
             const prompterTester = PrompterTester.init()
-                .handleInputBox('Specify SAM parameter value for SourceBucketName', (inputBox) => {
+                .handleInputBox('Specify SAM Template parameter value for SourceBucketName', (inputBox) => {
                     inputBox.acceptValue('my-source-bucket-name')
                 })
-                .handleInputBox('Specify SAM parameter value for DestinationBucketName', (inputBox) => {
+                .handleInputBox('Specify SAM Template parameter value for DestinationBucketName', (inputBox) => {
                     inputBox.acceptValue('my-destination-bucket-name')
                 })
-                .handleQuickPick('Specify parameters for deploy', async (quickPick) => {
+                .handleQuickPick('Specify parameter source for deploy', async (quickPick) => {
                     // Need time to check samconfig.toml file and generate options
                     await quickPick.untilReady()
 
@@ -134,8 +129,8 @@ describe('DeployWizard', async function () {
             const parameters = await (await getDeployWizard(templateFile)).run()
 
             assert(parameters)
-            assert.strictEqual(parameters.SourceBucketName, 'my-source-bucket-name')
-            assert.strictEqual(parameters.DestinationBucketName, 'my-destination-bucket-name')
+            assert.strictEqual(parameters.templateParameters.SourceBucketName, 'my-source-bucket-name')
+            assert.strictEqual(parameters.templateParameters.DestinationBucketName, 'my-destination-bucket-name')
 
             assert.strictEqual(parameters.template.uri.fsPath, templateFile.fsPath)
             assert.strictEqual(parameters.projectRoot.fsPath, projectRoot.fsPath)
@@ -165,13 +160,13 @@ describe('DeployWizard', async function () {
             await testFolder.write('samconfig.toml', samconfigCompleteData)
 
             const prompterTester = PrompterTester.init()
-                .handleInputBox('Specify SAM parameter value for SourceBucketName', (inputBox) => {
+                .handleInputBox('Specify SAM Template parameter value for SourceBucketName', (inputBox) => {
                     inputBox.acceptValue('my-source-bucket-name')
                 })
-                .handleInputBox('Specify SAM parameter value for DestinationBucketName', (inputBox) => {
+                .handleInputBox('Specify SAM Template parameter value for DestinationBucketName', (inputBox) => {
                     inputBox.acceptValue('my-destination-bucket-name')
                 })
-                .handleQuickPick('Specify parameters for deploy', async (quickPick) => {
+                .handleQuickPick('Specify parameter source for deploy', async (quickPick) => {
                     // Need time to check samconfig.toml file and generate options
                     await quickPick.untilReady()
 
@@ -186,8 +181,8 @@ describe('DeployWizard', async function () {
             const parameters = await (await getDeployWizard(templateFile)).run()
 
             assert(parameters)
-            assert.strictEqual(parameters.SourceBucketName, 'my-source-bucket-name')
-            assert.strictEqual(parameters.DestinationBucketName, 'my-destination-bucket-name')
+            assert.strictEqual(parameters.templateParameters.SourceBucketName, 'my-source-bucket-name')
+            assert.strictEqual(parameters.templateParameters.DestinationBucketName, 'my-destination-bucket-name')
 
             assert.strictEqual(parameters.template.uri.fsPath, templateFile.fsPath)
             assert.strictEqual(parameters.projectRoot.fsPath, projectRoot.fsPath)
@@ -229,7 +224,7 @@ describe('DeployWizard', async function () {
             // provide testWindow so that we can call other api
             const testWindow = getTestWindow()
 
-            PrompterTester.init(testWindow)
+            PrompterTester.init({ testWindow })
                 .handleQuickPick('Select a SAM/CloudFormation Template', async (quickPick) => {
                     // Need sometime to wait for the template to search for template file
                     await quickPick.untilReady()
@@ -237,7 +232,13 @@ describe('DeployWizard', async function () {
                     assert.strictEqual(quickPick.items[0].label, templateFile.fsPath)
                     quickPick.acceptItem(quickPick.items[0])
                 })
-                .handleQuickPick('Specify parameters for deploy', async (quickPick) => {
+                .handleInputBox('Specify SAM Template parameter value for SourceBucketName', (inputBox) => {
+                    inputBox.acceptValue('my-source-bucket-name')
+                })
+                .handleInputBox('Specify SAM Template parameter value for DestinationBucketName', (inputBox) => {
+                    inputBox.acceptValue('my-destination-bucket-name')
+                })
+                .handleQuickPick('Specify parameter source for deploy', async (quickPick) => {
                     // Need time to check samconfig.toml file and generate options
                     await quickPick.untilReady()
 
@@ -274,11 +275,13 @@ describe('DeployWizard', async function () {
             const parameters = await (await getDeployWizard(regionNode)).run()
 
             assert(parameters)
-            // assert.strictEqual(parameters.SourceBucketName, 'my-source-bucket-name')
-            // assert.strictEqual(parameters.DestinationBucketName, 'my-destination-bucket-name')
+            // assert.strictEqual(parameters.templateParameters.SourceBucketName, 'my-source-bucket-name')
+            // assert.strictEqual(parameters.templateParameters.DestinationBucketName, 'my-destination-bucket-name')
 
             assert.strictEqual(parameters.template.uri.fsPath, templateFile.fsPath)
             assert.strictEqual(parameters.projectRoot.fsPath, projectRoot.fsPath)
+            assert.strictEqual(parameters.templateParameters.SourceBucketName, 'my-source-bucket-name')
+            assert.strictEqual(parameters.templateParameters.DestinationBucketName, 'my-destination-bucket-name')
             assert.strictEqual(parameters.paramsSource, 1)
             assert.strictEqual(parameters.region, 'us-west-2')
             assert.strictEqual(parameters.stackName, 'stack1')
@@ -311,7 +314,13 @@ describe('DeployWizard', async function () {
                     assert.strictEqual(quickPick.items[0].label, templateFile.fsPath)
                     quickPick.acceptItem(quickPick.items[0])
                 })
-                .handleQuickPick('Specify parameters for deploy', async (quickPick) => {
+                .handleInputBox('Specify SAM Template parameter value for SourceBucketName', (inputBox) => {
+                    inputBox.acceptValue('my-source-bucket-name')
+                })
+                .handleInputBox('Specify SAM Template parameter value for DestinationBucketName', (inputBox) => {
+                    inputBox.acceptValue('my-destination-bucket-name')
+                })
+                .handleQuickPick('Specify parameter source for deploy', async (quickPick) => {
                     // Need time to check samconfig.toml file and generate options
                     await quickPick.untilReady()
 
@@ -329,6 +338,8 @@ describe('DeployWizard', async function () {
 
             assert.strictEqual(parameters.template.uri.fsPath, templateFile.fsPath)
             assert.strictEqual(parameters.projectRoot.fsPath, projectRoot.fsPath)
+            assert.strictEqual(parameters.templateParameters.SourceBucketName, 'my-source-bucket-name')
+            assert.strictEqual(parameters.templateParameters.DestinationBucketName, 'my-destination-bucket-name')
             assert.strictEqual(parameters.paramsSource, 2)
             assert.strictEqual(parameters.region, 'us-west-2')
             assert(!parameters.stackName)
@@ -366,13 +377,13 @@ describe('DeployWizard', async function () {
              */
 
             const prompterTester = PrompterTester.init()
-                .handleInputBox('Specify SAM parameter value for SourceBucketName', (inputBox) => {
+                .handleInputBox('Specify SAM Template parameter value for SourceBucketName', (inputBox) => {
                     inputBox.acceptValue('my-source-bucket-name')
                 })
-                .handleInputBox('Specify SAM parameter value for DestinationBucketName', (inputBox) => {
+                .handleInputBox('Specify SAM Template parameter value for DestinationBucketName', (inputBox) => {
                     inputBox.acceptValue('my-destination-bucket-name')
                 })
-                .handleQuickPick('Specify parameters for deploy', async (quickPick) => {
+                .handleQuickPick('Specify parameter source for deploy', async (quickPick) => {
                     // Need time to check samconfig.toml file and generate options
                     await quickPick.untilReady()
 
@@ -405,8 +416,8 @@ describe('DeployWizard', async function () {
             const parameters = await (await getDeployWizard(appNode)).run()
 
             assert(parameters)
-            assert.strictEqual(parameters.SourceBucketName, 'my-source-bucket-name')
-            assert.strictEqual(parameters.DestinationBucketName, 'my-destination-bucket-name')
+            assert.strictEqual(parameters.templateParameters.SourceBucketName, 'my-source-bucket-name')
+            assert.strictEqual(parameters.templateParameters.DestinationBucketName, 'my-destination-bucket-name')
 
             assert.strictEqual(parameters.template.uri.fsPath, templateFile.fsPath)
             assert.strictEqual(parameters.projectRoot.fsPath, projectRoot.fsPath)
@@ -437,13 +448,13 @@ describe('DeployWizard', async function () {
             await testFolder.write('samconfig.toml', samconfigCompleteData)
 
             const prompterTester = PrompterTester.init()
-                .handleInputBox('Specify SAM parameter value for SourceBucketName', (inputBox) => {
+                .handleInputBox('Specify SAM Template parameter value for SourceBucketName', (inputBox) => {
                     inputBox.acceptValue('my-source-bucket-name')
                 })
-                .handleInputBox('Specify SAM parameter value for DestinationBucketName', (inputBox) => {
+                .handleInputBox('Specify SAM Template parameter value for DestinationBucketName', (inputBox) => {
                     inputBox.acceptValue('my-destination-bucket-name')
                 })
-                .handleQuickPick('Specify parameters for deploy', async (quickPick) => {
+                .handleQuickPick('Specify parameter source for deploy', async (quickPick) => {
                     // Need time to check samconfig.toml file and generate options
                     await quickPick.untilReady()
 
@@ -458,8 +469,8 @@ describe('DeployWizard', async function () {
             const parameters = await (await getDeployWizard(appNode)).run()
 
             assert(parameters)
-            assert.strictEqual(parameters.SourceBucketName, 'my-source-bucket-name')
-            assert.strictEqual(parameters.DestinationBucketName, 'my-destination-bucket-name')
+            assert.strictEqual(parameters.templateParameters.SourceBucketName, 'my-source-bucket-name')
+            assert.strictEqual(parameters.templateParameters.DestinationBucketName, 'my-destination-bucket-name')
 
             assert.strictEqual(parameters.template.uri.fsPath, templateFile.fsPath)
             assert.strictEqual(parameters.projectRoot.fsPath, projectRoot.fsPath)
@@ -500,7 +511,13 @@ describe('DeployWizard', async function () {
                     assert.strictEqual(quickPick.items[0].label, templateFile.fsPath)
                     quickPick.acceptItem(quickPick.items[0])
                 })
-                .handleQuickPick('Specify parameters for deploy', async (quickPick) => {
+                .handleInputBox('Specify SAM Template parameter value for SourceBucketName', (inputBox) => {
+                    inputBox.acceptValue('my-source-bucket-name')
+                })
+                .handleInputBox('Specify SAM Template parameter value for DestinationBucketName', (inputBox) => {
+                    inputBox.acceptValue('my-destination-bucket-name')
+                })
+                .handleQuickPick('Specify parameter source for deploy', async (quickPick) => {
                     // Need time to check samconfig.toml file and generate options
                     await quickPick.untilReady()
                     assert.strictEqual(quickPick.items.length, 2)
@@ -544,12 +561,248 @@ describe('DeployWizard', async function () {
 
             assert.strictEqual(parameters.template.uri.fsPath, templateFile.fsPath)
             assert.strictEqual(parameters.projectRoot.fsPath, projectRoot.fsPath)
+            assert.strictEqual(parameters.templateParameters.SourceBucketName, 'my-source-bucket-name')
+            assert.strictEqual(parameters.templateParameters.DestinationBucketName, 'my-destination-bucket-name')
             assert.strictEqual(parameters.paramsSource, 1)
             assert.strictEqual(parameters.region, 'us-west-2')
             assert.strictEqual(parameters.stackName, 'stack3')
             assert.strictEqual(parameters.bucketSource, 1)
             assert.strictEqual(parameters.bucketName, 'stack-3-bucket')
             prompterTester.assertCallAll()
+        })
+
+        it('happy path without/invalid samconfig.toml with backward click', async () => {
+            /**
+             * Selection:
+             *  - SourceBucketName      : [Skip?]   undefined
+             *  - DestinationBucketName : [Skip?]   undefined
+             *
+             *  - template              : [Select]   template/yaml set
+             *  - projectRoot           : [Skip]     automatically set
+             *  - paramsSource          : [Select]   2. ('Specify required parameters')
+             *  - region                : [Skip]     automatically set from region node 'us-west-2'
+             *  - stackName             : [Select]   3. 'stack3'
+             *  - bucketSource          : [Select]   2. ('Specify an S3 bucket')
+             *  - bucketName            : [Select]   3. 'stack-3-bucket'
+             */
+
+            // Create a second project folder to simulate multiple project in 1 workspace
+            const testFolder2 = await TestFolder.create()
+            const templateFile2 = vscode.Uri.file(await testFolder2.write('template.yaml', validTemplateData))
+            await (await globals.templateRegistry).addItem(templateFile2)
+
+            const prompterTester = PrompterTester.init()
+                .handleQuickPick('Select a SAM/CloudFormation Template', async (quickPick) => {
+                    // Need sometime to wait for the template to search for template file
+                    await quickPick.untilReady()
+                    assert.strictEqual(quickPick.items.length, 2)
+                    assert.strictEqual(quickPick.items[0].label, templateFile.fsPath)
+                    quickPick.acceptItem(quickPick.items[0])
+                })
+                .handleInputBox(
+                    'Specify SAM Template parameter value for SourceBucketName',
+                    (() => {
+                        return createPromptHandler({
+                            default: async (inputBox: TestInputBox) => {
+                                inputBox.acceptValue('my-source-bucket-name')
+                            },
+                            numbered: [
+                                {
+                                    order: [2],
+                                    handler: clickBackButton,
+                                },
+                                {
+                                    order: [1],
+                                    handler: async (inputBox: TestInputBox) => {
+                                        inputBox.acceptValue('my-source-bucket-name-not-final')
+                                    },
+                                },
+                            ],
+                        })
+                    })()
+                )
+                .handleInputBox(
+                    'Specify SAM Template parameter value for DestinationBucketName',
+                    (() => {
+                        return createPromptHandler({
+                            default: async (inputBox: TestInputBox) => {
+                                inputBox.acceptValue('my-destination-bucket-name')
+                            },
+                            numbered: [
+                                {
+                                    order: [2],
+                                    handler: clickBackButton,
+                                },
+                            ],
+                        })
+                    })()
+                )
+                .handleQuickPick(
+                    'Specify parameter source for deploy',
+                    (() => {
+                        return createPromptHandler({
+                            default: async (quickPick: TestQuickPick) => {
+                                await quickPick.untilReady()
+                                assert.strictEqual(quickPick.items.length, 2)
+                                assert.strictEqual(quickPick.items[1].label, 'Specify required parameters')
+                                quickPick.acceptItem(quickPick.items[1])
+                            },
+                            numbered: [
+                                {
+                                    order: [1],
+                                    handler: async (quickPick: TestQuickPick) => {
+                                        await quickPick.untilReady()
+                                        quickPick.acceptItem(quickPick.items[0])
+                                    },
+                                },
+                                {
+                                    order: [2],
+                                    handler: clickBackButton,
+                                },
+                            ],
+                        })
+                    })()
+                )
+                .handleQuickPick(
+                    'Select a region',
+                    (() => {
+                        return createPromptHandler({
+                            default: async (quickPick: TestQuickPick) => {
+                                await quickPick.untilReady()
+                                const select = quickPick.items.filter((i) => i.detail === 'us-west-2')[0]
+                                quickPick.acceptItem(select || quickPick.items[0])
+                            },
+                            numbered: [
+                                {
+                                    order: [2],
+                                    handler: clickBackButton,
+                                },
+                            ],
+                        })
+                    })()
+                )
+                .handleQuickPick(
+                    'Select a CloudFormation Stack',
+                    (() => {
+                        return createPromptHandler({
+                            default: async (quickPick: TestQuickPick) => {
+                                await quickPick.untilReady()
+                                assert.strictEqual(quickPick.items[2].label, 'stack3')
+                                quickPick.acceptItem(quickPick.items[2])
+                            },
+                            numbered: [
+                                {
+                                    order: [1],
+                                    handler: async (quickPick: TestQuickPick) => {
+                                        await quickPick.untilReady()
+                                        assert.strictEqual(quickPick.items[0].label, 'stack1')
+                                        quickPick.acceptItem(quickPick.items[0])
+                                    },
+                                },
+                                {
+                                    order: [2],
+                                    handler: clickBackButton,
+                                },
+                            ],
+                        })
+                    })()
+                )
+                .handleQuickPick(
+                    'Specify S3 bucket for deployment artifacts',
+                    (() => {
+                        return createPromptHandler({
+                            default: async (quickPick: TestQuickPick) => {
+                                await quickPick.untilReady()
+                                assert.strictEqual(quickPick.items[1].label, 'Specify an S3 bucket')
+                                quickPick.acceptItem(quickPick.items[1])
+                            },
+                            numbered: [
+                                {
+                                    order: [2],
+                                    handler: clickBackButton,
+                                },
+                            ],
+                        })
+                    })()
+                )
+                .handleQuickPick(
+                    'Select an S3 Bucket',
+                    (() => {
+                        return createPromptHandler({
+                            default: async (picker: TestQuickPick) => {
+                                await picker.untilReady()
+                                assert.strictEqual(picker.items[2].label, 'stack-3-bucket')
+                                picker.acceptItem(picker.items[2])
+                            },
+                            numbered: [
+                                {
+                                    order: [1],
+                                    handler: clickBackButton,
+                                },
+                            ],
+                        })
+                    })()
+                )
+                .build()
+
+            const parameters = await (await getDeployWizard()).run()
+            assert(parameters)
+
+            const expectedCallOrder = [
+                'Select a SAM/CloudFormation Template',
+                'Specify SAM Template parameter value for SourceBucketName',
+                'Specify SAM Template parameter value for DestinationBucketName',
+                'Specify parameter source for deploy',
+                'Select a region',
+                'Select a CloudFormation Stack',
+                'Specify S3 bucket for deployment artifacts',
+                'Select an S3 Bucket',
+                'Specify S3 bucket for deployment artifacts',
+                'Select a CloudFormation Stack',
+                'Select a region',
+                'Specify parameter source for deploy',
+                'Specify SAM Template parameter value for DestinationBucketName',
+                'Specify SAM Template parameter value for SourceBucketName',
+                'Select a SAM/CloudFormation Template',
+                'Specify SAM Template parameter value for SourceBucketName',
+                'Specify SAM Template parameter value for DestinationBucketName',
+                'Specify parameter source for deploy',
+                'Select a region',
+                'Select a CloudFormation Stack',
+                'Specify S3 bucket for deployment artifacts',
+                'Select an S3 Bucket',
+            ]
+
+            assert.deepStrictEqual(
+                {
+                    ...parameters,
+                    template: { uri: { fsPath: parameters.template.uri.fsPath } },
+                    projectRoot: { fsPath: parameters.projectRoot.fsPath },
+                },
+                {
+                    template: {
+                        uri: {
+                            fsPath: templateFile.fsPath,
+                        },
+                    },
+                    projectRoot: {
+                        fsPath: projectRoot.fsPath,
+                    },
+                    templateParameters: {
+                        SourceBucketName: 'my-source-bucket-name',
+                        DestinationBucketName: 'my-destination-bucket-name',
+                    },
+                    paramsSource: 1,
+                    region: 'us-west-2',
+                    stackName: 'stack3',
+                    bucketSource: 1,
+                    bucketName: 'stack-3-bucket',
+                }
+            )
+
+            for (const [index, title] of expectedCallOrder.entries()) {
+                prompterTester.assertCallOrder(title, index + 1)
+            }
         })
 
         it('happy path with samconfig.toml', async () => {
@@ -584,7 +837,13 @@ describe('DeployWizard', async function () {
                     assert.strictEqual(quickPick.items[0].label, templateFile.fsPath)
                     quickPick.acceptItem(quickPick.items[0])
                 })
-                .handleQuickPick('Specify parameters for deploy', async (quickPick) => {
+                .handleInputBox('Specify SAM Template parameter value for SourceBucketName', (inputBox) => {
+                    inputBox.acceptValue('my-source-bucket-name')
+                })
+                .handleInputBox('Specify SAM Template parameter value for DestinationBucketName', (inputBox) => {
+                    inputBox.acceptValue('my-destination-bucket-name')
+                })
+                .handleQuickPick('Specify parameter source for deploy', async (quickPick) => {
                     // Need time to check samconfig.toml file and generate options
                     await quickPick.untilReady()
                     assert.strictEqual(quickPick.items.length, 3)
@@ -598,6 +857,8 @@ describe('DeployWizard', async function () {
             assert(parameters)
             assert.strictEqual(parameters.template.uri.fsPath, templateFile.fsPath)
             assert.strictEqual(parameters.projectRoot.fsPath, projectRoot.fsPath)
+            assert.strictEqual(parameters.templateParameters.SourceBucketName, 'my-source-bucket-name')
+            assert.strictEqual(parameters.templateParameters.DestinationBucketName, 'my-destination-bucket-name')
             assert.strictEqual(parameters.paramsSource, 2)
             assert(!parameters.region)
             assert(!parameters.stackName)
@@ -655,7 +916,7 @@ describe('SAM Deploy', () => {
     describe(':) path', () => {
         beforeEach(() => {
             mockGetSamCliPath = sandbox.stub().resolves({ path: 'sam-cli-path' })
-            sandbox.stub(UtilsModule, 'getSamCliPathAndVersion').callsFake(mockGetSamCliPath)
+            sandbox.stub(SamUtilsModule, 'getSamCliPathAndVersion').callsFake(mockGetSamCliPath)
 
             mockChildProcess = sandbox.stub().resolves({})
             sandbox.stub(ProcessUtilsModule, 'ChildProcess').callsFake(mockChildProcess)
@@ -668,8 +929,10 @@ describe('SAM Deploy', () => {
             // Mock result from DeployWizard; the Wizard is already tested separately
             mockDeployParams = {
                 paramsSource: ParamsSource.SamConfig,
-                SourceBucketName: 'my-source-bucket-name',
-                DestinationBucketName: 'my-destination-bucket-name',
+                templateParameters: {
+                    SourceBucketName: 'my-source-bucket-name',
+                    DestinationBucketName: 'my-destination-bucket-name',
+                },
                 region: undefined,
                 stackName: undefined,
                 bucketName: undefined,
@@ -715,8 +978,8 @@ describe('SAM Deploy', () => {
                     '--config-file',
                     `${samconfigFile}`,
                     '--parameter-overrides',
-                    `ParameterKey=SourceBucketName,ParameterValue=${mockDeployParams.SourceBucketName} ` +
-                        `ParameterKey=DestinationBucketName,ParameterValue=${mockDeployParams.DestinationBucketName}`,
+                    `ParameterKey=SourceBucketName,ParameterValue=${mockDeployParams.templateParameters.SourceBucketName} ` +
+                        `ParameterKey=DestinationBucketName,ParameterValue=${mockDeployParams.templateParameters.DestinationBucketName}`,
                 ],
                 {
                     spawnOptions: {
@@ -744,8 +1007,10 @@ describe('SAM Deploy', () => {
             // Mock result from DeployWizard; the Wizard is already tested separately
             mockDeployParams = {
                 paramsSource: ParamsSource.SamConfig,
-                SourceBucketName: 'my-source-bucket-name',
-                DestinationBucketName: 'my-destination-bucket-name',
+                templateParameters: {
+                    SourceBucketName: 'my-source-bucket-name',
+                    DestinationBucketName: 'my-destination-bucket-name',
+                },
                 // Simulate entry from region node when region ('us-east-1') differ from 'us-west-2' in samconfig.toml
                 region: 'us-east-1',
                 stackName: undefined,
@@ -791,8 +1056,8 @@ describe('SAM Deploy', () => {
                     '--config-file',
                     `${samconfigFile}`,
                     '--parameter-overrides',
-                    `ParameterKey=SourceBucketName,ParameterValue=${mockDeployParams.SourceBucketName} ` +
-                        `ParameterKey=DestinationBucketName,ParameterValue=${mockDeployParams.DestinationBucketName}`,
+                    `ParameterKey=SourceBucketName,ParameterValue=${mockDeployParams.templateParameters.SourceBucketName} ` +
+                        `ParameterKey=DestinationBucketName,ParameterValue=${mockDeployParams.templateParameters.DestinationBucketName}`,
                 ],
                 {
                     spawnOptions: {
@@ -820,8 +1085,10 @@ describe('SAM Deploy', () => {
             // Mock result from DeployWizard; the Wizard is already tested separately
             mockDeployParams = {
                 paramsSource: ParamsSource.SpecifyAndSave,
-                SourceBucketName: 'my-source-bucket-name',
-                DestinationBucketName: 'my-destination-bucket-name',
+                templateParameters: {
+                    SourceBucketName: 'my-source-bucket-name',
+                    DestinationBucketName: 'my-destination-bucket-name',
+                },
                 region: 'us-east-1',
                 stackName: 'stack1',
                 bucketName: undefined,
@@ -869,8 +1136,8 @@ describe('SAM Deploy', () => {
                     'CAPABILITY_NAMED_IAM',
                     '--save-params',
                     '--parameter-overrides',
-                    `ParameterKey=SourceBucketName,ParameterValue=${mockDeployParams.SourceBucketName} ` +
-                        `ParameterKey=DestinationBucketName,ParameterValue=${mockDeployParams.DestinationBucketName}`,
+                    `ParameterKey=SourceBucketName,ParameterValue=${mockDeployParams.templateParameters.SourceBucketName} ` +
+                        `ParameterKey=DestinationBucketName,ParameterValue=${mockDeployParams.templateParameters.DestinationBucketName}`,
                 ],
                 {
                     spawnOptions: {
@@ -904,8 +1171,10 @@ describe('SAM Deploy', () => {
         beforeEach(async () => {
             mockDeployParams = {
                 paramsSource: ParamsSource.SpecifyAndSave,
-                SourceBucketName: 'my-source-bucket-name',
-                DestinationBucketName: 'my-destination-bucket-name',
+                templateParameters: {
+                    SourceBucketName: 'my-source-bucket-name',
+                    DestinationBucketName: 'my-destination-bucket-name',
+                },
                 region: 'us-east-1',
                 stackName: 'stack1',
                 bucketName: undefined,
@@ -935,7 +1204,7 @@ describe('SAM Deploy', () => {
 
                 // Break point
                 mockGetSamCliPath = sandbox
-                    .stub(UtilsModule, 'getSamCliPathAndVersion')
+                    .stub(SamUtilsModule, 'getSamCliPathAndVersion')
                     .rejects(
                         new ToolkitError('SAM CLI version 1.53.0 or higher is required', { code: 'VersionTooLow' })
                     )
@@ -963,7 +1232,7 @@ describe('SAM Deploy', () => {
                 // Happy Stub
                 sandbox.stub(DeployWizard.prototype, 'run').resolves(mockDeployParams)
                 mockGetSamCliPath = sandbox.stub().resolves({ path: 'sam-cli-path' })
-                sandbox.stub(UtilsModule, 'getSamCliPathAndVersion').callsFake(mockGetSamCliPath)
+                sandbox.stub(SamUtilsModule, 'getSamCliPathAndVersion').callsFake(mockGetSamCliPath)
                 mockChildProcess = sandbox.stub().resolves({})
                 sandbox.stub(ProcessUtilsModule, 'ChildProcess').callsFake(mockChildProcess)
 
@@ -989,7 +1258,7 @@ describe('SAM Deploy', () => {
                 // Happy Stub
                 sandbox.stub(DeployWizard.prototype, 'run').resolves(mockDeployParams)
                 mockGetSamCliPath = sandbox.stub().resolves({ path: 'sam-cli-path' })
-                sandbox.stub(UtilsModule, 'getSamCliPathAndVersion').callsFake(mockGetSamCliPath)
+                sandbox.stub(SamUtilsModule, 'getSamCliPathAndVersion').callsFake(mockGetSamCliPath)
                 mockChildProcess = sandbox.stub().resolves({})
                 sandbox.stub(ProcessUtilsModule, 'ChildProcess').callsFake(mockChildProcess)
 
@@ -1017,32 +1286,28 @@ describe('SAM Deploy', () => {
     })
 })
 
-const s3BucketListSummary: Array<
-    RequiredProps<S3.Bucket, 'Name'> & {
-        readonly region: string
-    }
-> = [
-    { Name: 'stack-1-bucket', region: 'us-west-2' },
-    { Name: 'stack-2-bucket', region: 'us-west-2' },
-    { Name: 'stack-3-bucket', region: 'us-west-2' },
+const s3BucketListSummary: Array<Omit<S3Bucket, 'BucketRegion'> & { readonly region: string }> = [
+    { Name: 'stack-1-bucket', region: 'us-west-2', Arn: 'arn-1' },
+    { Name: 'stack-2-bucket', region: 'us-west-2', Arn: 'arn-2' },
+    { Name: 'stack-3-bucket', region: 'us-west-2', Arn: 'arn-3' },
 ]
 
-const stackSummaries: CloudFormation.StackSummary[][] = [
+const stackSummaries: CloudFormationClientModule.StackSummary[][] = [
     [
         {
             StackName: 'stack1',
             StackStatus: 'CREATE_COMPLETE',
             CreationTime: new Date(),
-        } as CloudFormation.StackSummary,
+        } as CloudFormationClientModule.StackSummary,
         {
             StackName: 'stack2',
             StackStatus: 'CREATE_COMPLETE',
             CreationTime: new Date(),
-        } as CloudFormation.StackSummary,
+        } as CloudFormationClientModule.StackSummary,
         {
             StackName: 'stack3',
             StackStatus: 'CREATE_COMPLETE',
             CreationTime: new Date(),
-        } as CloudFormation.StackSummary,
+        } as CloudFormationClientModule.StackSummary,
     ],
 ]

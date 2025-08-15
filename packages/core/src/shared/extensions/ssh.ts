@@ -7,15 +7,26 @@ import * as vscode from 'vscode'
 import * as path from 'path'
 import * as nls from 'vscode-nls'
 import fs from '../fs/fs'
-import { getLogger } from '../logger'
-import { ChildProcess } from '../utilities/processUtils'
+import { getLogger } from '../logger/logger'
+import { ChildProcess, ChildProcessResult } from '../utilities/processUtils'
 import { ArrayConstructor, NonNullObject } from '../utilities/typeConstructors'
 import { Settings } from '../settings'
 import { VSCODE_EXTENSION_ID } from '../extensions'
+import { SSM } from 'aws-sdk'
+import { ErrorInformation, ToolkitError } from '../errors'
 
 const localize = nls.loadMessageBundle()
 
 export const sshAgentSocketVariable = 'SSH_AUTH_SOCK'
+
+export class SshError extends ToolkitError {
+    constructor(message: string, options: ErrorInformation) {
+        super(message, {
+            ...options,
+            code: SshError.name,
+        })
+    }
+}
 
 export function getSshConfigPath(): string {
     const sshConfigDir = path.join(fs.getUserHomeDir(), '.ssh')
@@ -116,6 +127,37 @@ export class RemoteSshSettings extends Settings.define('remote.SSH', remoteSshTy
 
             return false
         }
+    }
+}
+
+/**
+ * Test a SSH connection over SSM.
+ * @param ProcessClass given process to test the connection within.
+ * @param hostname
+ * @param sshPath
+ * @param user
+ * @param session SSM session credentials. These cannot be reused, so it may be required to create a seperate session for the test connection.
+ * @returns
+ */
+export async function testSshConnection(
+    ProcessClass: typeof ChildProcess,
+    hostname: string,
+    sshPath: string,
+    user: string,
+    session: SSM.StartSessionResponse
+): Promise<ChildProcessResult | never> {
+    const env = { SESSION_ID: session.SessionId, STREAM_URL: session.StreamUrl, TOKEN: session.TokenValue }
+    const process = new ProcessClass(sshPath, ['-T', `${user}@${hostname}`, 'echo "test connection succeeded" && exit'])
+    try {
+        return await process.run({
+            spawnOptions: {
+                env,
+            },
+        })
+    } catch (error) {
+        throw new SshError(process.result()?.stderr ?? 'An unknown error occurred when testing the connection', {
+            cause: error as Error,
+        })
     }
 }
 

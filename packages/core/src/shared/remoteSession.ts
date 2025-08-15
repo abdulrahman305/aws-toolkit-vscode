@@ -19,11 +19,16 @@ import { getOrInstallCli } from './utilities/cliUtils'
 import { pushIf } from './utilities/collectionUtils'
 import { ChildProcess } from './utilities/processUtils'
 import { findSshPath, getVscodeCliPath } from './utilities/pathFind'
-import { IamClient } from './clients/iamClient'
-import { IAM } from 'aws-sdk'
+import { IamClient } from './clients/iam'
 import { getIdeProperties } from './extensionUtilities'
+import { EvaluationResult } from '@aws-sdk/client-iam'
 
 const policyAttachDelay = 5000
+
+export enum RemoteSessionError {
+    ExtensionVersionTooLow = 'ExtensionVersionTooLow',
+    MissingExtension = 'MissingExtension',
+}
 
 export interface MissingTool {
     readonly name: 'code' | 'ssm' | 'ssh'
@@ -77,7 +82,7 @@ interface DependencyPaths {
     readonly ssh: string
 }
 
-type EnvProvider = () => Promise<NodeJS.ProcessEnv>
+export type EnvProvider = () => Promise<NodeJS.ProcessEnv>
 
 export interface VscodeRemoteConnection {
     readonly sshPath: string
@@ -114,13 +119,13 @@ export async function ensureRemoteSshInstalled(): Promise<void> {
         if (isExtensionInstalled(VSCODE_EXTENSION_ID.remotessh)) {
             throw new ToolkitError('Remote SSH extension version is too low', {
                 cancelled: true,
-                code: 'ExtensionVersionTooLow',
+                code: RemoteSessionError.ExtensionVersionTooLow,
                 details: { expected: vscodeExtensionMinVersion.remotessh },
             })
         } else {
             throw new ToolkitError('Remote SSH extension not installed', {
                 cancelled: true,
-                code: 'MissingExtension',
+                code: RemoteSessionError.MissingExtension,
             })
         }
     }
@@ -167,11 +172,11 @@ export async function handleMissingTool(tools: Err<MissingTool[]>) {
         missing
     )
 
-    tools.err().forEach((d) => {
+    for (const d of tools.err()) {
         if (d.reason) {
             getLogger().error(`codecatalyst: failed to get tool "${d.name}": ${d.reason}`)
         }
-    })
+    }
 
     return Result.err(
         new ToolkitError(msg, {
@@ -243,11 +248,31 @@ function getSsmPolicyDocument() {
             }`
 }
 
-export async function getDeniedSsmActions(client: IamClient, roleArn: string): Promise<IAM.EvaluationResult[]> {
+export async function getDeniedSsmActions(client: IamClient, roleArn: string): Promise<EvaluationResult[]> {
     const deniedActions = await client.getDeniedActions({
         PolicySourceArn: roleArn,
         ActionNames: minimumSsmActions,
     })
 
     return deniedActions
+}
+
+/**
+ * Creates a new {@link ChildProcess} class bound to a specific remote environment. All instances of this
+ * derived class will have SSM session information injected as environment variables as-needed.
+ */
+export function createBoundProcess(envProvider: EnvProvider): typeof ChildProcess {
+    type Run = ChildProcess['run']
+    return class SessionBoundProcess extends ChildProcess {
+        public override async run(...args: Parameters<Run>): ReturnType<Run> {
+            const options = args[0]
+            const envVars = await envProvider()
+            const spawnOptions = {
+                ...options?.spawnOptions,
+                env: { ...envVars, ...options?.spawnOptions?.env },
+            }
+
+            return super.run({ ...options, spawnOptions })
+        }
+    }
 }

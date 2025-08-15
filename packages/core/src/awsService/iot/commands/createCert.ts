@@ -5,16 +5,16 @@
 
 import * as vscode from 'vscode'
 import * as path from 'path'
-import { getLogger } from '../../../shared/logger'
+import { getLogger } from '../../../shared/logger/logger'
 import { localize } from '../../../shared/utilities/vsCodeUtils'
 import { showViewLogsMessage } from '../../../shared/utilities/messages'
 import { IotCertsFolderNode } from '../explorer/iotCertFolderNode'
 import { fileExists } from '../../../shared/filesystemUtilities'
 import { Iot } from 'aws-sdk'
-import { fs } from '../../../shared'
+import { fs } from '../../../shared/fs/fs'
 
 // eslint-disable-next-line @typescript-eslint/naming-convention
-const MODE_RW_R_R = 0o644 //File permission 0644 rw-r--r-- for PEM files.
+const MODE_RW_R_R = 0o644 // File permission 0644 rw-r--r-- for PEM files.
 // eslint-disable-next-line @typescript-eslint/naming-convention
 const PEM_FILE_ENCODING = 'ascii'
 
@@ -60,10 +60,10 @@ export async function createCertificateCommand(
     getLogger().info(`Downloaded certificate ${certId}`)
     void vscode.window.showInformationMessage(localize('AWS.iot.createCert.success', 'Created certificate {0}', certId))
 
-    //Save resources
+    // Save resources
     const saveSuccessful = await saveFunc(folderLocation, certId!, certPem, privateKey, publicKey)
     if (!saveSuccessful) {
-        //Delete the certificate if the key pair cannot be saved
+        // Delete the certificate if the key pair cannot be saved
         try {
             await node.iot.deleteCertificate({ certificateId: certId! })
         } catch (e) {
@@ -72,7 +72,7 @@ export async function createCertificateCommand(
         }
     }
 
-    //Refresh the Certificate Folder node
+    // Refresh the Certificate Folder node
     await node.refreshNode()
 }
 

@@ -31,6 +31,10 @@ import {
     setContext,
     setupUninstallHandler,
     maybeShowMinVscodeWarning,
+    Experiments,
+    isSageMaker,
+    isAmazonLinux2,
+    ProxyUtil,
 } from 'aws-core-vscode/shared'
 import { ExtStartUpSources } from 'aws-core-vscode/telemetry'
 import { VSCODE_EXTENSION_ID } from 'aws-core-vscode/utils'
@@ -39,6 +43,9 @@ import * as semver from 'semver'
 import * as vscode from 'vscode'
 import { registerCommands } from './commands'
 import { focusAmazonQPanel } from 'aws-core-vscode/codewhispererChat'
+import { activate as activateAmazonqLsp } from './lsp/activation'
+import { hasGlibcPatch } from './lsp/client'
+import { activateAutoDebug } from './lsp/chat/autoDebug/activation'
 
 export const amazonQContextPrefix = 'amazonq'
 
@@ -53,7 +60,7 @@ export async function activateAmazonQCommon(context: vscode.ExtensionContext, is
     errors.init(fs.getUsername(), env.isAutomation())
     await initializeComputeRegion()
 
-    globals.contextPrefix = 'amazonq.' //todo: disconnect from above line
+    globals.contextPrefix = 'amazonq.' // todo: disconnect from above line
 
     // Avoid activation if older toolkit is installed
     // Amazon Q is only compatible with AWS Toolkit >= 3.0.0
@@ -97,10 +104,8 @@ export async function activateAmazonQCommon(context: vscode.ExtensionContext, is
     globals.manifestPaths.endpoints = context.asAbsolutePath(join('resources', 'endpoints.json'))
     globals.regionProvider = RegionProvider.fromEndpointsProvider(makeEndpointsProvider())
 
-    const qOutputChannel = vscode.window.createOutputChannel('Amazon Q', { log: true })
     const qLogChannel = vscode.window.createOutputChannel('Amazon Q Logs', { log: true })
-    await activateLogger(context, amazonQContextPrefix, qOutputChannel, qLogChannel)
-    globals.outputChannel = qOutputChannel
+    await activateLogger(context, amazonQContextPrefix, qLogChannel)
     globals.logOutputChannel = qLogChannel
     globals.loginManager = new LoginManager(globals.awsContext, new CredentialsStore())
 
@@ -115,7 +120,25 @@ export async function activateAmazonQCommon(context: vscode.ExtensionContext, is
     const extContext = {
         extensionContext: context,
     }
+
+    // Configure proxy settings early
+    await ProxyUtil.configureProxyForLanguageServer()
+
+    // This contains every lsp agnostic things (auth, security scan, code scan)
     await activateCodeWhisperer(extContext as ExtContext)
+
+    if (!isAmazonLinux2() || hasGlibcPatch()) {
+        // Activate Amazon Q LSP for everyone unless they're using AL2 without the glibc patch
+        await activateAmazonqLsp(context)
+    }
+
+    // Activate AutoDebug feature at extension level
+    try {
+        const autoDebugFeature = await activateAutoDebug(context)
+        context.subscriptions.push(autoDebugFeature)
+    } catch (error) {
+        getLogger().error('Failed to activate AutoDebug feature at extension level: %s', error)
+    }
 
     // Generic extension commands
     registerGenericCommands(context, amazonQContextPrefix)
@@ -137,6 +160,12 @@ export async function activateAmazonQCommon(context: vscode.ExtensionContext, is
     // Hide the Amazon Q tree in toolkit explorer
     await setContext('aws.toolkit.amazonq.dismissed', true)
 
+    // set context var to check if its SageMaker AI or not
+    await setContext('aws.isSageMaker', isSageMaker())
+
+    // set context var to check if its SageMaker Unified Studio or not
+    await setContext('aws.isSageMakerUnifiedStudio', isSageMaker('SMUS'))
+
     // reload webviews
     await vscode.commands.executeCommand('workbench.action.webview.reloadWebviewAction')
 
@@ -144,9 +173,28 @@ export async function activateAmazonQCommon(context: vscode.ExtensionContext, is
         // Give time for the extension to finish initializing.
         globals.clock.setTimeout(async () => {
             CommonAuthWebview.authSource = ExtStartUpSources.firstStartUp
-            void focusAmazonQPanel.execute(placeholder, 'firstStartUp')
+            focusAmazonQPanel.execute(placeholder, ExtStartUpSources.firstStartUp).catch((e) => {
+                getLogger().error('focusAmazonQPanel failed: %s', e)
+            })
         }, 1000)
     }
+
+    context.subscriptions.push(
+        Experiments.instance.onDidChange(async (event) => {
+            if (event.key === 'amazonqLSP' || event.key === 'amazonqChatLSP' || event.key === 'amazonqLSPInline') {
+                await vscode.window
+                    .showInformationMessage(
+                        'Amazon Q LSP setting has changed. Reload VS Code for the changes to take effect.',
+                        'Reload Now'
+                    )
+                    .then(async (selection) => {
+                        if (selection === 'Reload Now') {
+                            await vscode.commands.executeCommand('workbench.action.reloadWindow')
+                        }
+                    })
+            }
+        })
+    )
 }
 
 export async function deactivateCommon() {

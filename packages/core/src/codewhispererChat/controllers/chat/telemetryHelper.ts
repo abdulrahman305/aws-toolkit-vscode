@@ -2,6 +2,7 @@
  * Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
+
 import { UserIntent } from '@amzn/codewhisperer-streaming'
 import {
     AmazonqAddMessage,
@@ -27,17 +28,28 @@ import {
     ResponseBodyLinkClickMessage,
     SourceLinkClickMessage,
     TriggerPayload,
+    AdditionalContextInfo,
 } from './model'
 import { TriggerEvent, TriggerEventsStorage } from '../../storages/triggerEvents'
 import globals from '../../../shared/extensionGlobals'
-import { getLogger } from '../../../shared/logger'
+import { getLogger } from '../../../shared/logger/logger'
 import { codeWhispererClient } from '../../../codewhisperer/client/codewhisperer'
 import { isAwsError } from '../../../shared/errors'
-import { ChatMessageInteractionType } from '../../../codewhisperer/client/codewhispereruserclient'
+import CodeWhispererUserClient, {
+    ChatMessageInteractionType,
+} from '../../../codewhisperer/client/codewhispereruserclient'
 import { supportedLanguagesList } from '../chat/chatRequest/converter'
 import { AuthUtil } from '../../../codewhisperer/util/authUtil'
 import { getSelectedCustomization } from '../../../codewhisperer/util/customizationUtil'
-import { undefinedIfEmpty } from '../../../shared'
+import { undefinedIfEmpty } from '../../../shared/utilities/textUtilities'
+import { sleep } from '../../../shared/utilities/timeoutUtils'
+import {
+    FileDiagnostic,
+    getDiagnosticsDifferences,
+    getDiagnosticsOfCurrentFile,
+    toIdeDiagnostics,
+} from '../../../codewhisperer/util/diagnosticsUtil'
+import { Auth } from '../../../auth/auth'
 
 export function logSendTelemetryEventFailure(error: any) {
     let requestId: string | undefined
@@ -68,7 +80,7 @@ export class CWCTelemetryHelper {
     private conversationStreamStartTime: Map<string, number> = new Map()
     private conversationStreamTotalTime: Map<string, number> = new Map()
     private responseStreamTimeForChunks: Map<string, number[]> = new Map()
-    private responseWithProjectContext: Map<string, boolean> = new Map()
+    private responseWithContextInfo: Map<string, AdditionalContextInfo> = new Map()
 
     // Keeps track of when chunks of data were displayed in a tab
     private displayTimeForChunks: Map<string, number[]> = new Map()
@@ -86,9 +98,15 @@ export class CWCTelemetryHelper {
         }
     > = new Map()
 
+    private documentDiagnostics: FileDiagnostic | undefined = undefined
+
     constructor(sessionStorage: ChatSessionStorage, triggerEventsStorage: TriggerEventsStorage) {
         this.sessionStorage = sessionStorage
         this.triggerEventsStorage = triggerEventsStorage
+    }
+
+    public setDocumentDiagnostics() {
+        this.documentDiagnostics = getDiagnosticsOfCurrentFile()
     }
 
     public static init(sessionStorage: ChatSessionStorage, triggerEventsStorage: TriggerEventsStorage) {
@@ -188,6 +206,11 @@ export class CWCTelemetryHelper {
     ) {
         const conversationId = this.getConversationId(message.tabID)
         let event: AmazonqInteractWithMessage | undefined
+        let additionalContextInfo = undefined
+        const messageId = (message as any).messageId
+        if (messageId) {
+            additionalContextInfo = this.responseWithContextInfo.get(messageId)
+        }
         switch (message.command) {
             case 'insert_code_at_cursor_position':
                 message = message as InsertCodeAtCursorPosition
@@ -204,7 +227,6 @@ export class CWCTelemetryHelper {
                     cwsprChatHasReference: message.codeReference && message.codeReference.length > 0,
                     cwsprChatCodeBlockIndex: message.codeBlockIndex,
                     cwsprChatTotalCodeBlocks: message.totalCodeBlocks,
-                    cwsprChatHasProjectContext: this.responseWithProjectContext.get(message.messageId),
                     cwsprChatProgrammingLanguage: message.codeBlockLanguage,
                 }
                 break
@@ -222,7 +244,6 @@ export class CWCTelemetryHelper {
                     cwsprChatHasReference: message.codeReference && message.codeReference.length > 0,
                     cwsprChatCodeBlockIndex: message.codeBlockIndex,
                     cwsprChatTotalCodeBlocks: message.totalCodeBlocks,
-                    cwsprChatHasProjectContext: this.responseWithProjectContext.get(message.messageId),
                     cwsprChatProgrammingLanguage: message.codeBlockLanguage,
                 }
                 break
@@ -239,7 +260,6 @@ export class CWCTelemetryHelper {
                         message.referenceTrackerInformation && message.referenceTrackerInformation.length > 0,
                     cwsprChatCodeBlockIndex: message.codeBlockIndex,
                     cwsprChatTotalCodeBlocks: message.totalCodeBlocks,
-                    cwsprChatHasProjectContext: this.responseWithProjectContext.get(message.messageId),
                 }
                 break
             case 'view_diff':
@@ -255,7 +275,6 @@ export class CWCTelemetryHelper {
                         message.referenceTrackerInformation && message.referenceTrackerInformation.length > 0,
                     cwsprChatCodeBlockIndex: message.codeBlockIndex,
                     cwsprChatTotalCodeBlocks: message.totalCodeBlocks,
-                    cwsprChatHasProjectContext: this.responseWithProjectContext.get(message.messageId),
                 }
                 break
             case 'follow-up-was-clicked':
@@ -266,7 +285,6 @@ export class CWCTelemetryHelper {
                     credentialStartUrl: AuthUtil.instance.startUrl,
                     cwsprChatMessageId: message.messageId,
                     cwsprChatInteractionType: 'clickFollowUp',
-                    cwsprChatHasProjectContext: this.responseWithProjectContext.get(message.messageId),
                 }
                 break
             case 'chat-item-voted':
@@ -277,7 +295,6 @@ export class CWCTelemetryHelper {
                     cwsprChatConversationId: conversationId ?? '',
                     credentialStartUrl: AuthUtil.instance.startUrl,
                     cwsprChatInteractionType: message.vote,
-                    cwsprChatHasProjectContext: this.responseWithProjectContext.get(message.messageId),
                 }
                 break
             case 'source-link-click':
@@ -289,7 +306,6 @@ export class CWCTelemetryHelper {
                     credentialStartUrl: AuthUtil.instance.startUrl,
                     cwsprChatInteractionType: 'clickLink',
                     cwsprChatInteractionTarget: message.link,
-                    cwsprChatHasProjectContext: this.responseWithProjectContext.get(message.messageId),
                 }
                 break
             case 'response-body-link-click':
@@ -301,7 +317,6 @@ export class CWCTelemetryHelper {
                     credentialStartUrl: AuthUtil.instance.startUrl,
                     cwsprChatInteractionType: 'clickBodyLink',
                     cwsprChatInteractionTarget: message.link,
-                    cwsprChatHasProjectContext: this.responseWithProjectContext.get(message.messageId),
                 }
                 break
             case 'footer-info-link-click':
@@ -320,26 +335,52 @@ export class CWCTelemetryHelper {
         if (!event) {
             return
         }
-        telemetry.amazonq_interactWithMessage.emit(event)
+        telemetry.amazonq_interactWithMessage.emit({ ...event, ...additionalContextInfo })
 
-        codeWhispererClient
-            .sendTelemetryEvent({
-                telemetryEvent: {
-                    chatInteractWithMessageEvent: {
-                        conversationId: event.cwsprChatConversationId,
-                        messageId: event.cwsprChatMessageId,
-                        interactionType: this.getCWClientTelemetryInteractionType(event.cwsprChatInteractionType),
-                        interactionTarget: event.cwsprChatInteractionTarget,
-                        acceptedCharacterCount: event.cwsprChatAcceptedCharactersLength,
-                        acceptedLineCount: event.cwsprChatAcceptedNumberOfLines,
-                        acceptedSnippetHasReference: false,
-                        hasProjectLevelContext: this.responseWithProjectContext.get(event.cwsprChatMessageId),
-                        customizationArn: undefinedIfEmpty(getSelectedCustomization().arn),
-                    },
-                },
+        const interactWithMessageEvent: CodeWhispererUserClient.ChatInteractWithMessageEvent = {
+            conversationId: event.cwsprChatConversationId,
+            messageId: event.cwsprChatMessageId,
+            interactionType: this.getCWClientTelemetryInteractionType(event.cwsprChatInteractionType),
+            interactionTarget: event.cwsprChatInteractionTarget,
+            acceptedCharacterCount: event.cwsprChatAcceptedCharactersLength,
+            acceptedLineCount: event.cwsprChatAcceptedNumberOfLines,
+            acceptedSnippetHasReference: false,
+            hasProjectLevelContext: this.responseWithContextInfo.get(event.cwsprChatMessageId)
+                ?.cwsprChatHasProjectContext,
+            customizationArn: undefinedIfEmpty(getSelectedCustomization().arn),
+        }
+        if (interactWithMessageEvent.interactionType === 'INSERT_AT_CURSOR' && Auth.instance.isInternalAmazonUser()) {
+            // wait 1 seconds for the user installed 3rd party LSP
+            // to update its diagnostics.
+            void sleep(1000).then(() => {
+                const diagnosticDiff = getDiagnosticsDifferences(
+                    this.documentDiagnostics,
+                    getDiagnosticsOfCurrentFile()
+                )
+                interactWithMessageEvent.addedIdeDiagnostics = diagnosticDiff.added.map((it) => toIdeDiagnostics(it))
+                interactWithMessageEvent.removedIdeDiagnostics = diagnosticDiff.removed.map((it) =>
+                    toIdeDiagnostics(it)
+                )
+                codeWhispererClient
+                    .sendTelemetryEvent({
+                        telemetryEvent: {
+                            chatInteractWithMessageEvent: interactWithMessageEvent,
+                        },
+                    })
+                    .then()
+                    .catch(logSendTelemetryEventFailure)
             })
-            .then()
-            .catch(logSendTelemetryEventFailure)
+        } else {
+            codeWhispererClient
+                .sendTelemetryEvent({
+                    telemetryEvent: {
+                        chatInteractWithMessageEvent: interactWithMessageEvent,
+                    },
+                    profileArn: AuthUtil.instance.regionProfileManager.activeRegionProfile?.arn,
+                })
+                .then()
+                .catch(logSendTelemetryEventFailure)
+        }
     }
 
     private getCWClientTelemetryInteractionType(type: CwsprChatInteractionType): ChatMessageInteractionType {
@@ -420,6 +461,30 @@ export class CWCTelemetryHelper {
         })
     }
 
+    public getAdditionalContextCounts(triggerPayload: TriggerPayload) {
+        const counts = {
+            fileContextCount: 0,
+            folderContextCount: 0,
+            promptContextCount: 0,
+        }
+
+        if (triggerPayload.context) {
+            for (const context of triggerPayload.context) {
+                if (typeof context !== 'string') {
+                    if (context.id === 'file') {
+                        counts.fileContextCount++
+                    } else if (context.id === 'folder') {
+                        counts.folderContextCount++
+                    } else if (context.id === 'prompt') {
+                        counts.promptContextCount++
+                    }
+                }
+            }
+        }
+
+        return counts
+    }
+
     public emitAddMessage(tabID: string, fullDisplayLatency: number, traceId: string, startTime?: number) {
         const payload = this.messageStorage.get(tabID)
         if (!payload) {
@@ -433,6 +498,9 @@ export class CWCTelemetryHelper {
             triggerPayload.relevantTextDocuments &&
             triggerPayload.relevantTextDocuments.length > 0 &&
             triggerPayload.useRelevantDocuments === true
+
+        const contextCounts = this.getAdditionalContextCounts(triggerPayload)
+
         const event: AmazonqAddMessage = {
             result: 'Succeeded',
             cwsprChatConversationId: this.getConversationId(message.tabID) ?? '',
@@ -441,7 +509,7 @@ export class CWCTelemetryHelper {
             cwsprChatUserIntent: this.getUserIntentForTelemetry(triggerPayload.userIntent),
             cwsprChatHasCodeSnippet: triggerPayload.codeSelection && !triggerPayload.codeSelection.isEmpty,
             cwsprChatProgrammingLanguage: triggerPayload.fileLanguage,
-            cwsprChatActiveEditorTotalCharacters: triggerPayload.fileText?.length,
+            cwsprChatActiveEditorTotalCharacters: triggerPayload.fileText.length,
             cwsprChatActiveEditorImportCount: triggerPayload.codeQuery?.fullyQualifiedNames?.used?.length,
             cwsprChatResponseCodeSnippetCount: message.totalNumberOfCodeBlocksInResponse,
             cwsprChatResponseCode: message.responseCode,
@@ -458,12 +526,32 @@ export class CWCTelemetryHelper {
             cwsprChatFullServerResponseLatency: this.conversationStreamTotalTime.get(message.tabID) ?? 0,
             cwsprChatTimeBetweenDisplays: JSON.stringify(this.getTimeBetweenChunks(tabID, this.displayTimeForChunks)),
             cwsprChatFullDisplayLatency: fullDisplayLatency,
-            cwsprChatRequestLength: triggerPayload.message?.length ?? 0,
+            cwsprChatRequestLength: triggerPayload.message.length,
             cwsprChatResponseLength: message.messageLength,
             cwsprChatConversationType: 'Chat',
             credentialStartUrl: AuthUtil.instance.startUrl,
             codewhispererCustomizationArn: triggerPayload.customization.arn,
             cwsprChatHasProjectContext: hasProjectLevelContext,
+            cwsprChatHasContextList: triggerPayload.documentReferences.length > 0,
+            cwsprChatFolderContextCount: contextCounts.folderContextCount,
+            cwsprChatFileContextCount: contextCounts.fileContextCount,
+            cwsprChatFileContextLength: triggerPayload.contextLengths.additionalContextLengths.fileContextLength,
+            cwsprChatFileContextTruncatedLength:
+                triggerPayload.contextLengths.truncatedAdditionalContextLengths.fileContextLength,
+            cwsprChatRuleContextCount: triggerPayload.workspaceRulesCount,
+            cwsprChatRuleContextLength: triggerPayload.contextLengths.additionalContextLengths.ruleContextLength,
+            cwsprChatRuleContextTruncatedLength:
+                triggerPayload.contextLengths.truncatedAdditionalContextLengths.ruleContextLength,
+            cwsprChatPromptContextCount: contextCounts.promptContextCount,
+            cwsprChatPromptContextLength: triggerPayload.contextLengths.additionalContextLengths.promptContextLength,
+            cwsprChatPromptContextTruncatedLength:
+                triggerPayload.contextLengths.truncatedAdditionalContextLengths.promptContextLength,
+            cwsprChatFocusFileContextLength: triggerPayload.contextLengths.focusFileContextLength,
+            cwsprChatFocusFileContextTruncatedLength: triggerPayload.contextLengths.truncatedFocusFileContextLength,
+            cwsprChatUserInputContextLength: triggerPayload.contextLengths.userInputContextLength,
+            cwsprChatUserInputContextTruncatedLength: triggerPayload.contextLengths.truncatedUserInputContextLength,
+            cwsprChatWorkspaceContextLength: triggerPayload.contextLengths.workspaceContextLength,
+            cwsprChatWorkspaceContextTruncatedLength: triggerPayload.contextLengths.truncatedWorkspaceContextLength,
             traceId,
         }
 
@@ -492,6 +580,7 @@ export class CWCTelemetryHelper {
                         customizationArn: undefinedIfEmpty(getSelectedCustomization().arn),
                     },
                 },
+                profileArn: AuthUtil.instance.regionProfileManager.activeRegionProfile?.arn,
             })
             .then()
             .catch(logSendTelemetryEventFailure)
@@ -554,8 +643,8 @@ export class CWCTelemetryHelper {
         this.displayTimeForChunks.set(tabID, [...chunkTimes, time])
     }
 
-    public setResponseFromProjectContext(messageId: string) {
-        this.responseWithProjectContext.set(messageId, true)
+    public setResponseFromAdditionalContext(messageId: string, additionalContextInfo: AdditionalContextInfo) {
+        this.responseWithContextInfo.set(messageId, additionalContextInfo)
     }
 
     public setConversationStreamStartTime(tabID: string) {

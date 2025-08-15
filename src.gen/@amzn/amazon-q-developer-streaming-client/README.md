@@ -7,7 +7,7 @@
 AWS SDK for JavaScript QDeveloperStreaming Client for Node.js, Browser and React Native.
 
 ## Installing
-To install the this package, simply type add or install @amzn/amazon-q-developer-streaming-client
+To install this package, simply type add or install @amzn/amazon-q-developer-streaming-client
 using your favorite package manager:
 - `npm install @amzn/amazon-q-developer-streaming-client`
 - `yarn add @amzn/amazon-q-developer-streaming-client`
@@ -194,6 +194,7 @@ To contribute to client you can check our [generate clients scripts](https://git
 This SDK is distributed under the
 [Apache License, Version 2.0](http://www.apache.org/licenses/LICENSE-2.0),
 see LICENSE for more information.
+
 ## Client Commands (Operations List)
 
 <details>
@@ -324,6 +325,13 @@ UpdateProfile
 </details>
 <details>
 <summary>
+VendKeyGrant
+</summary>
+
+[Command API Reference](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/client/qdeveloperstreaming/command/VendKeyGrantCommand/) / [Input](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/VendKeyGrantCommandInput/) / [Output](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/VendKeyGrantCommandOutput/)
+</details>
+<details>
+<summary>
 CreateArtifactUploadUrl
 </summary>
 
@@ -345,10 +353,24 @@ CreateUploadUrl
 </details>
 <details>
 <summary>
+CreateWorkspace
+</summary>
+
+[Command API Reference](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/client/qdeveloperstreaming/command/CreateWorkspaceCommand/) / [Input](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/CreateWorkspaceCommandInput/) / [Output](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/CreateWorkspaceCommandOutput/)
+</details>
+<details>
+<summary>
 DeleteTaskAssistConversation
 </summary>
 
 [Command API Reference](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/client/qdeveloperstreaming/command/DeleteTaskAssistConversationCommand/) / [Input](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/DeleteTaskAssistConversationCommandInput/) / [Output](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/DeleteTaskAssistConversationCommandOutput/)
+</details>
+<details>
+<summary>
+DeleteWorkspace
+</summary>
+
+[Command API Reference](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/client/qdeveloperstreaming/command/DeleteWorkspaceCommand/) / [Input](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/DeleteWorkspaceCommandInput/) / [Output](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/DeleteWorkspaceCommandOutput/)
 </details>
 <details>
 <summary>
@@ -363,6 +385,13 @@ GetCodeAnalysis
 </summary>
 
 [Command API Reference](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/client/qdeveloperstreaming/command/GetCodeAnalysisCommand/) / [Input](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/GetCodeAnalysisCommandInput/) / [Output](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/GetCodeAnalysisCommandOutput/)
+</details>
+<details>
+<summary>
+GetCodeFixJob
+</summary>
+
+[Command API Reference](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/client/qdeveloperstreaming/command/GetCodeFixJobCommand/) / [Input](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/GetCodeFixJobCommandInput/) / [Output](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/GetCodeFixJobCommandOutput/)
 </details>
 <details>
 <summary>
@@ -401,6 +430,13 @@ ListAvailableCustomizations
 </details>
 <details>
 <summary>
+ListAvailableProfiles
+</summary>
+
+[Command API Reference](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/client/qdeveloperstreaming/command/ListAvailableProfilesCommand/) / [Input](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/ListAvailableProfilesCommandInput/) / [Output](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/ListAvailableProfilesCommandOutput/)
+</details>
+<details>
+<summary>
 ListCodeAnalysisFindings
 </summary>
 
@@ -412,6 +448,13 @@ ListFeatureEvaluations
 </summary>
 
 [Command API Reference](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/client/qdeveloperstreaming/command/ListFeatureEvaluationsCommand/) / [Input](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/ListFeatureEvaluationsCommandInput/) / [Output](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/ListFeatureEvaluationsCommandOutput/)
+</details>
+<details>
+<summary>
+ListWorkspaceMetadata
+</summary>
+
+[Command API Reference](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/client/qdeveloperstreaming/command/ListWorkspaceMetadataCommand/) / [Input](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/ListWorkspaceMetadataCommandInput/) / [Output](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/ListWorkspaceMetadataCommandOutput/)
 </details>
 <details>
 <summary>
@@ -433,6 +476,13 @@ StartCodeAnalysis
 </summary>
 
 [Command API Reference](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/client/qdeveloperstreaming/command/StartCodeAnalysisCommand/) / [Input](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/StartCodeAnalysisCommandInput/) / [Output](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/StartCodeAnalysisCommandOutput/)
+</details>
+<details>
+<summary>
+StartCodeFixJob
+</summary>
+
+[Command API Reference](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/client/qdeveloperstreaming/command/StartCodeFixJobCommand/) / [Input](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/StartCodeFixJobCommandInput/) / [Output](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/StartCodeFixJobCommandOutput/)
 </details>
 <details>
 <summary>
@@ -485,6 +535,13 @@ GenerateTaskAssistPlan
 </details>
 <details>
 <summary>
+AssociateConnectorResource
+</summary>
+
+[Command API Reference](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/client/qdeveloperstreaming/command/AssociateConnectorResourceCommand/) / [Input](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/AssociateConnectorResourceCommandInput/) / [Output](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/AssociateConnectorResourceCommandOutput/)
+</details>
+<details>
+<summary>
 CreateAssignment
 </summary>
 
@@ -520,6 +577,13 @@ DeleteAssignment
 </details>
 <details>
 <summary>
+DeleteConversation
+</summary>
+
+[Command API Reference](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/client/qdeveloperstreaming/command/DeleteConversationCommand/) / [Input](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/DeleteConversationCommandInput/) / [Output](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/DeleteConversationCommandOutput/)
+</details>
+<details>
+<summary>
 DeleteExtension
 </summary>
 
@@ -531,6 +595,13 @@ DeletePlugin
 </summary>
 
 [Command API Reference](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/client/qdeveloperstreaming/command/DeletePluginCommand/) / [Input](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/DeletePluginCommandInput/) / [Output](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/DeletePluginCommandOutput/)
+</details>
+<details>
+<summary>
+GetConnector
+</summary>
+
+[Command API Reference](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/client/qdeveloperstreaming/command/GetConnectorCommand/) / [Input](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/GetConnectorCommandInput/) / [Output](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/GetConnectorCommandOutput/)
 </details>
 <details>
 <summary>
@@ -590,6 +661,13 @@ ListConversations
 </details>
 <details>
 <summary>
+ListDashboardMetrics
+</summary>
+
+[Command API Reference](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/client/qdeveloperstreaming/command/ListDashboardMetricsCommand/) / [Input](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/ListDashboardMetricsCommandInput/) / [Output](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/ListDashboardMetricsCommandOutput/)
+</details>
+<details>
+<summary>
 ListExtensionProviders
 </summary>
 
@@ -639,6 +717,13 @@ PassRequest
 </details>
 <details>
 <summary>
+RejectConnector
+</summary>
+
+[Command API Reference](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/client/qdeveloperstreaming/command/RejectConnectorCommand/) / [Input](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/RejectConnectorCommandInput/) / [Output](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/RejectConnectorCommandOutput/)
+</details>
+<details>
+<summary>
 SendEvent
 </summary>
 
@@ -685,6 +770,20 @@ UntagResource
 </summary>
 
 [Command API Reference](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/client/qdeveloperstreaming/command/UntagResourceCommand/) / [Input](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/UntagResourceCommandInput/) / [Output](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/UntagResourceCommandOutput/)
+</details>
+<details>
+<summary>
+UpdateConversation
+</summary>
+
+[Command API Reference](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/client/qdeveloperstreaming/command/UpdateConversationCommand/) / [Input](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/UpdateConversationCommandInput/) / [Output](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/UpdateConversationCommandOutput/)
+</details>
+<details>
+<summary>
+UpdatePlugin
+</summary>
+
+[Command API Reference](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/client/qdeveloperstreaming/command/UpdatePluginCommand/) / [Input](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/UpdatePluginCommandInput/) / [Output](https://docs.aws.amazon.com/AWSJavaScriptSDK/v3/latest/Package/-aws-sdk-client-qdeveloperstreaming/Interface/UpdatePluginCommandOutput/)
 </details>
 <details>
 <summary>

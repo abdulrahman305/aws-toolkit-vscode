@@ -4,7 +4,7 @@
  */
 
 import * as vscode from 'vscode'
-import { TemplateItem, createTemplatePrompter } from './sync'
+import { TemplateItem, createTemplatePrompter } from '../ui/sam/templatePrompter'
 import { ChildProcess } from '../utilities/processUtils'
 import { addTelemetryEnvVar } from './cli/samCliInvokerUtils'
 import { Wizard } from '../wizards/wizard'
@@ -19,9 +19,19 @@ import globals from '../extensionGlobals'
 import { TreeNode } from '../treeview/resourceTreeDataProvider'
 import { telemetry } from '../telemetry/telemetry'
 import { getSpawnEnv } from '../env/resolveEnv'
-import { getProjectRoot, getSamCliPathAndVersion, isDotnetRuntime } from './utils'
+import {
+    getErrorCode,
+    getProjectRoot,
+    getRecentResponse,
+    getSamCliPathAndVersion,
+    getTerminalFromError,
+    isDotnetRuntime,
+    updateRecentResponse,
+} from './utils'
 import { getConfigFileUri, validateSamBuildConfig } from './config'
 import { runInTerminal } from './processTerminal'
+import { buildMementoRootKey, buildProcessMementoRootKey, globalIdentifier } from './constants'
+import { SemVer } from 'semver'
 
 export interface BuildParams {
     readonly template: TemplateItem
@@ -58,7 +68,7 @@ export function createParamsSourcePrompter(existValidSamconfig: boolean) {
     )
 
     return createQuickPick(items, {
-        title: 'Specify parameters for build',
+        title: 'Specify parameter source for build',
         placeholder: 'Select configuration options for sam build',
         buttons: createCommonButtons(samBuildUrl),
     })
@@ -128,7 +138,9 @@ export class BuildWizard extends Wizard<BuildParams> {
         this.arg = arg
         if (this.arg === undefined) {
             // "Build" command was invoked on the command palette.
-            this.form.template.bindPrompter(() => createTemplatePrompter(this.registry))
+            this.form.template.bindPrompter(() =>
+                createTemplatePrompter(this.registry, buildMementoRootKey, samBuildUrl)
+            )
             this.form.projectRoot.setDefault(({ template }) => getProjectRoot(template))
             this.form.paramsSource.bindPrompter(async ({ projectRoot }) => {
                 const existValidSamConfig: boolean | undefined = await validateSamBuildConfig(projectRoot)
@@ -197,13 +209,19 @@ export async function runBuild(arg?: TreeNode): Promise<SamBuildResult> {
         throw new CancellationError('user')
     }
 
+    throwIfTemplateIsBeingBuilt(params.template.uri.path)
+    await registerTemplateBuild(params.template.uri.path)
+
     const projectRoot = params.projectRoot
 
     const defaultFlags: string[] = ['--cached', '--parallel', '--save-params', '--use-container']
+
+    const { path: samCliPath, parsedVersion } = await getSamCliPathAndVersion()
+
     // refactor
     const buildFlags: string[] =
         params.paramsSource === ParamsSource.Specify && params.buildFlags
-            ? JSON.parse(params.buildFlags)
+            ? await resolveBuildFlags(JSON.parse(params.buildFlags), parsedVersion)
             : await getBuildFlags(params.paramsSource, projectRoot, defaultFlags)
 
     // todo remove
@@ -216,27 +234,44 @@ export async function runBuild(arg?: TreeNode): Promise<SamBuildResult> {
     const templatePath = params.template.uri.fsPath
     buildFlags.push('--template', `${templatePath}`)
 
+    await updateRecentResponse(buildMementoRootKey, 'global', 'templatePath', templatePath)
+
     try {
-        const { path: samCliPath } = await getSamCliPathAndVersion()
+        await vscode.window.withProgress(
+            {
+                cancellable: true,
+                location: vscode.ProgressLocation.Notification,
+            },
+            async (progress, token) => {
+                token.onCancellationRequested(async () => {
+                    throw new CancellationError('user')
+                })
 
-        // Create a child process to run the SAM build command
-        const buildProcess = new ChildProcess(samCliPath, ['build', ...buildFlags], {
-            spawnOptions: await addTelemetryEnvVar({
-                cwd: params.projectRoot.fsPath,
-                env: await getSpawnEnv(process.env),
-            }),
-        })
+                progress.report({ message: `Building SAM template at ${params.template.uri.path}` })
 
-        // Run SAM build in Terminal
-        await runInTerminal(buildProcess, 'build')
+                // Create a child process to run the SAM build command
+                const buildProcess = new ChildProcess(samCliPath, ['build', ...buildFlags], {
+                    spawnOptions: await addTelemetryEnvVar({
+                        cwd: params.projectRoot.fsPath,
+                        env: await getSpawnEnv(process.env),
+                    }),
+                })
+
+                // Run SAM build in Terminal
+                await runInTerminal(buildProcess, 'build')
+            }
+        )
 
         return {
             isSuccess: true,
         }
     } catch (error) {
         throw ToolkitError.chain(error, 'Failed to build SAM template', {
-            details: { ...resolveBuildArgConflict(buildFlags) },
+            details: { terminal: getTerminalFromError(error), ...resolveBuildArgConflict(buildFlags) },
+            code: getErrorCode(error),
         })
+    } finally {
+        await unregisterTemplateBuild(params.template.uri.path)
     }
 }
 
@@ -267,4 +302,45 @@ function resolveBuildArgConflict(boundArgs: string[]): string[] {
     //     boundArgsSet.add('--no-beta-features')
     // }
     return Array.from(boundArgsSet)
+}
+export async function resolveBuildFlags(buildFlags: string[], samCliVersion: SemVer | null): Promise<string[]> {
+    // --no-use-container was not added until v1.133.0
+    if (samCliVersion?.compare('1.133.0') ?? -1 < 0) {
+        return buildFlags
+    }
+    if (!buildFlags.includes('--use-container')) {
+        buildFlags.push('--no-use-container')
+    }
+    return buildFlags
+}
+
+/**
+ * Returns true if there's an ongoing build process for the provided template, false otherwise
+ * @Param templatePath The path to the template.yaml file
+ */
+function isBuildInProgress(templatePath: string): boolean {
+    const expirationDate = getRecentResponse(buildProcessMementoRootKey, globalIdentifier, templatePath)
+    if (expirationDate) {
+        return Date.now() < parseInt(expirationDate)
+    }
+    return false
+}
+
+/**
+ * Throws an error if there's a build in progress for the provided template
+ * @Param templatePath The path to the template.yaml file
+ */
+export function throwIfTemplateIsBeingBuilt(templatePath: string) {
+    if (isBuildInProgress(templatePath)) {
+        throw new ToolkitError('This template is already being built', { code: 'BuildInProgress' })
+    }
+}
+
+export async function registerTemplateBuild(templatePath: string) {
+    const expirationDate = Date.now() + 5 * 60 * 1000 // five minutes
+    await updateRecentResponse(buildProcessMementoRootKey, globalIdentifier, templatePath, expirationDate.toString())
+}
+
+export async function unregisterTemplateBuild(templatePath: string) {
+    await updateRecentResponse(buildProcessMementoRootKey, globalIdentifier, templatePath, undefined)
 }

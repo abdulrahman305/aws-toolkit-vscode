@@ -1,3 +1,189 @@
+## 3.71.0 2025-08-06
+
+- Miscellaneous non-user-facing changes
+
+## 3.70.0 2025-07-30
+
+- **Feature** Improved connection actions for SSO
+
+## 3.69.0 2025-07-16
+
+- **Bug Fix** SageMaker: Enable per-region manual filtering of Spaces
+- **Bug Fix** SageMaker: Show error message when connecting remotely from a remote workspace
+- **Bug Fix** SageMaker: Prompt user to use upgraded instance type if the chosen one has insufficient memory
+- **Bug Fix** Lambda upload from directory doesn't allow selection of directory
+- **Bug Fix** Toolkit fails to recognize it's logged in when editing Lambda function
+- **Bug Fix** SageMaker: Resolve race condition when reconnecting from multiple remote windows.
+- **Bug Fix** SageMaker: Resolve connection issues to SageMaker Spaces with capital letters in the name
+- **Feature** SageMaker: Add support for deep-linked Space reconnection
+- **Feature** Lambda Remote Debugging: Remote invoke configuration webview now supports attaching a debugger to directly debug your lambda function in the cloud.
+- **Feature** SageMaker: Enable auto-shutdown support for Spaces
+
+## 3.68.0 2025-07-03
+
+- **Bug Fix** [StepFunctions]: Cannot call TestState with variables in Workflow Studio
+- **Feature** Lambda to SAM Transformation: AWS Toolkit Explorer now can convert existing Lambda functions into SAM (Serverless Application Model) projects. This conversion creates a project structure that's ready for local development and can be managed using Application Builder
+- **Feature** Lambda Quick Edit: AWS Toolkit Explorer now offers a streamlined editing experience for Lambda functions. Download a function's code with double-click, make local modifications, and easily synchronize changes back to the cloud.
+
+## 3.67.0 2025-06-25
+
+- **Bug Fix** State Machine deployments can now be initiated directly from Workflow Studio without closing the editor
+- **Bug Fix** Step Function performance metrics now accurately reflect only Workflow Studio document activity
+- **Feature** AccessAnalyzer: CheckNoPublicAccess custom policy check supports additional resource types.
+
+## 3.66.0 2025-06-18
+
+- Miscellaneous non-user-facing changes
+
+## 3.65.0 2025-06-13
+
+- Miscellaneous non-user-facing changes
+
+## 3.64.0 2025-06-04
+
+- Miscellaneous non-user-facing changes
+
+## 3.63.0 2025-05-22
+
+- Miscellaneous non-user-facing changes
+
+## 3.62.0 2025-05-15
+
+- Miscellaneous non-user-facing changes
+
+## 3.61.0 2025-05-14
+
+- Miscellaneous non-user-facing changes
+
+## 3.60.0 2025-05-06
+
+- Miscellaneous non-user-facing changes
+
+## 3.59.0 2025-05-05
+
+- Miscellaneous non-user-facing changes
+
+## 3.58.0 2025-05-02
+
+- Miscellaneous non-user-facing changes
+
+## 3.57.0 2025-05-01
+
+- **Feature** AppBuilder: unchecking the 'Attach a debugger' checkbox in local invoke webview invokes the function without a debugger
+
+## 3.56.0 2025-04-25
+
+- Miscellaneous non-user-facing changes
+
+## 3.55.0 2025-04-18
+
+- Miscellaneous non-user-facing changes
+
+## 3.54.0 2025-04-09
+
+- Miscellaneous non-user-facing changes
+
+## 3.53.0 2025-04-03
+
+- **Feature** Step Functions: Use WorkflowStudio to render StateMachine Graph in CDK applications
+
+## 3.52.0 2025-03-28
+
+- **Bug Fix** SAM build: prevent running multiple build processes for the same template
+- **Feature** Lambda: Add 'Process SNS notification messages with Lambda' Serverless Land pattern.
+
+## 3.51.0 2025-03-20
+
+- **Feature** Update Step Functions marketplace documentation.
+
+## 3.50.0 2025-03-13
+
+- Miscellaneous non-user-facing changes
+
+## 3.49.0 2025-03-06
+
+- **Feature** Step Functions: Updated previewStateMachine command to open with Workflow Studio instead
+- **Feature** Lambda: Users can explore Serverless Land patterns
+- **Feature** Step Functions: Added support for calling the TestState API in Workflow Studio
+- **Feature** Step Functions: Added support for using Workflow Studio for editing ASL files in JSON and YAML
+- **Feature** AppBuilder: selecting a runtime in the local invoke view can override the runtime specified in template.yaml
+- **Feature** Step Functions: Allow starting state machine execution with no input provided
+
+## 3.48.0 2025-02-27
+
+- **Feature** Step Functions: Expand data source and output options for Distributed Map in ASL language schema
+
+## 3.47.0 2025-02-20
+
+- **Bug Fix** appBuilder: pass '--no-use-container' when '--use-container' is not selected in quickpick
+- **Feature** App Builder: Autoload debug configuration for local invoke webview
+
+## 3.46.0 2025-02-13
+
+- **Feature** Lambda: Support for environment variables in the editor webview.
+
+## 3.45.0 2025-02-05
+
+- **Feature** Add support for DocumentDB clusters
+- **Feature** Step Functions: Upgrade amazon-states-language-service to 1.15. This new version enhance autocomplete for variable and JSONata expression in JSON ASL files.
+
+## 3.44.0 2025-01-30
+
+- **Bug Fix** Policy Checks selected profile is always default
+- **Feature** From the Lambda treeview in AWS Explorer, you can now right-click on a function name and start a CloudWatch Logs Live Tail sessions for the selected function.
+- **Feature** EC2 is now available in AWS Explorer:
+
+1. Remote-connect VSCode to your EC2 instances.
+2. Open terminal to your EC2 instances.
+3. Start, stop, and visit the Launch page.
+
+## 3.43.0 2025-01-23
+
+- **Bug Fix** AppBuilder: Update error messaging to make more legible and actionable
+- **Bug Fix** Notifications: 'Dismiss' command visible in command palette.
+- **Removal** Cloud9: remove special-case logic.
+
+## 3.42.0 2025-01-15
+
+- **Bug Fix** Auth: Valid StartURL not accepted at login
+
+## 3.41.0 2025-01-09
+
+- **Removal** Amazon Q: No longer autoinstall Amazon Q if the user had used CodeWhisperer in old Toolkit versions.
+- **Removal** Auth: No longer inform users that Amazon Q and Toolkit extensions have separate auth sessions.
+
+## 3.40.0 2024-12-17
+
+- **Bug Fix** Auth: SSO failed to missing refreshToken
+- **Bug Fix** AppBuilder : Support template parameters override for SAM deploy and sync for all entry points
+
+## 3.39.0 2024-12-12
+
+- **Bug Fix** EC2: avoid overwriting authorized_keys file on remote
+- **Bug Fix** Auth: SSO session was bad, but no reauth prompt given
+- **Feature** Enable the EC2 experiment (setting id: `aws.experiments`) in VSCode settings to try the new EC2 features of AWS Toolkit! Remote Connect and Open Terminal to EC2 instances, list EC2 instances and view their status in AWS Explorer. 
+- **Feature** CloudWatch Logs: Added support for Live Tailing LogGroups. Start using LiveTail by: selecting 'Tail Log Group' in the command palette, or, right clicking/pressing the 'Play' icon on a Log Group in the Explorer menu. See [Troubleshoot with CloudWatch Logs Live Tail](https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/CloudWatchLogs_LiveTail.html) for more information. LiveTail is a paid feature - for more information about pricing, see the Logs tab at [Amazon CloudWatch Pricing](https://aws.amazon.com/cloudwatch/pricing/).
+
+## 3.38.0 2024-12-10
+
+- **Feature** Step Functions: Upgrade amazon-states-language-service to 1.13. This new version adds support for [JSONata and Variables](https://aws.amazon.com/blogs/compute/simplifying-developer-experience-with-variables-and-jsonata-in-aws-step-functions/).
+
+## 3.36.0 2024-11-27
+
+- **Bug Fix** appBuilder refresh feature doesnt work during sync --watch
+- **Bug Fix** 'View Logs...' action redirects to output channel instead of Terminal
+
+## 3.35.0 2024-11-22
+
+- **Bug Fix** SAM: Update Sync and Deploy prompter titles for parameter source
+- **Bug Fix** SAM: Add artifact bucket source prompter for SAM sync command
+- **Bug Fix** SAM: Update Sync prompter title for sync parameters
+- **Bug Fix** SAM: Fix prompter button URLs for build, deploy and sync commands
+- **Bug Fix** EC2: terminated instances no longer show pending icon
+- **Feature** python 3.13 support for SAM and lambda
+- **Feature** nodejs22.x support for SAM and lambda
+- **Feature** Notifications: Support for delivering critical alerts and product updates
+
 ## 3.34.0 2024-11-14
 
 - **Bug Fix** SAM debugging: misleading 'IaC' message/placeholder

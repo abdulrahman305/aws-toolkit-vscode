@@ -37,8 +37,8 @@ import {
 
 import { posix } from 'path'
 import * as URL from 'url'
-import { getLanguageModelCache } from '../../shared/languageServer/languageModelCache'
-import { formatError, runSafe, runSafeAsync } from '../../shared/languageServer/utils/runner'
+import { getLanguageModelCache } from '../../shared/lsp/languageModelCache'
+import { formatError, runSafe, runSafeAsync } from '../../shared/lsp/utils/runner'
 import { YAML_ASL, JSON_ASL } from '../constants/aslFormats'
 
 export const ResultLimitReached: NotificationType<string, any> = new NotificationType('asl/resultLimitReached')
@@ -317,12 +317,13 @@ function validateTextDocument(textDocument: TextDocument, callback?: (diagnostic
 connection.onDidChangeWatchedFiles((change) => {
     // Monitored files have changed in VSCode
     let hasChanges = false
-    change.changes.forEach((c) => {
+    for (const c of change.changes) {
         if (getLanguageService('asl').resetSchema(c.uri)) {
             hasChanges = true
         }
-    })
+    }
     if (hasChanges) {
+        // eslint-disable-next-line unicorn/no-array-for-each
         documents.all().forEach(triggerValidation)
     }
 })

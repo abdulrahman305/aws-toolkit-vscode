@@ -6,7 +6,7 @@
 import * as vscode from 'vscode'
 import * as nls from 'vscode-nls'
 import { ToolkitError, isUserCancelledError, resolveErrorMessageToDisplay } from '../errors'
-import { getLogger } from '../logger'
+import { getLogger } from '../logger/logger'
 import { showMessageWithUrl } from './messages'
 import { Logging } from '../logger/commands'
 
@@ -32,11 +32,18 @@ export async function logAndShowError(
         return
     }
     const logsItem = localize('AWS.generic.message.viewLogs', 'View Logs...')
+    const viewInTerminalItem = localize('AWS.generic.message.viewInTerminal', 'View Logs In Terminal')
     const logId = getLogger().error(`${topic}: %s`, error)
     const message = resolveErrorMessageToDisplay(error, defaultMessage)
 
     if (error instanceof ToolkitError && error.documentationUri) {
         await showMessageWithUrl(message, error.documentationUri, 'View Documentation', 'error')
+    } else if (error instanceof ToolkitError && (error.details?.['terminal'] as unknown as vscode.Terminal)) {
+        await vscode.window.showErrorMessage(message, viewInTerminalItem).then(async (resp) => {
+            if (resp === viewInTerminalItem) {
+                ;(error.details?.['terminal'] as unknown as vscode.Terminal).show()
+            }
+        })
     } else {
         await vscode.window.showErrorMessage(message, logsItem).then(async (resp) => {
             if (resp === logsItem) {

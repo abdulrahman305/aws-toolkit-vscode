@@ -8,20 +8,21 @@ import { Connector } from '../connector'
 import { TabsStorage } from '../storages/tabsStorage'
 import { WelcomeFollowupType } from '../apps/amazonqCommonsConnector'
 import { AuthFollowUpType } from './generator'
+import { MynahUIRef } from '../../../commons/types'
 
 export interface FollowUpInteractionHandlerProps {
-    mynahUI: MynahUI
+    mynahUIRef: MynahUIRef
     connector: Connector
     tabsStorage: TabsStorage
 }
 
 export class FollowUpInteractionHandler {
-    private mynahUI: MynahUI
+    private mynahUIRef: MynahUIRef
     private connector: Connector
     private tabsStorage: TabsStorage
 
     constructor(props: FollowUpInteractionHandlerProps) {
-        this.mynahUI = props.mynahUI
+        this.mynahUIRef = props.mynahUIRef
         this.connector = props.connector
         this.tabsStorage = props.tabsStorage
     }
@@ -40,6 +41,11 @@ export class FollowUpInteractionHandler {
             this.connector.help(tabID)
             return
         }
+
+        if (!this.mynahUI) {
+            return
+        }
+
         // we need to check if there is a prompt
         // which will cause an api call
         // then we can set the loading state to true
@@ -67,12 +73,13 @@ export class FollowUpInteractionHandler {
                 return
             }
         }
+
         this.connector.onFollowUpClicked(tabID, messageId, followUp)
     }
 
     public onWelcomeFollowUpClicked(tabID: string, welcomeFollowUpType: WelcomeFollowupType) {
         if (welcomeFollowUpType === 'continue-to-chat') {
-            this.mynahUI.addChatItem(tabID, {
+            this.mynahUI?.addChatItem(tabID, {
                 type: ChatItemType.ANSWER,
                 body: 'Ok, please write your question below.',
             })
@@ -80,5 +87,9 @@ export class FollowUpInteractionHandler {
             this.connector.onUpdateTabType(tabID)
             return
         }
+    }
+
+    private get mynahUI(): MynahUI | undefined {
+        return this.mynahUIRef.mynahUI
     }
 }

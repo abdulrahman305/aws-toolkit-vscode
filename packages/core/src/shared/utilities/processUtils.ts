@@ -3,10 +3,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import * as proc from 'child_process'
+import * as proc from 'child_process' // eslint-disable-line no-restricted-imports
 import * as crossSpawn from 'cross-spawn'
-import * as logger from '../logger'
+import * as logger from '../logger/logger'
 import { Timeout, CancellationError, waitUntil } from './timeoutUtils'
+import { PollingSet } from './pollingSet'
+import { oncePerUniqueArg } from './functionUtils'
 
 export interface RunParameterContext {
     /** Reports an error parsed from the stdin/stdout streams. */
@@ -42,6 +44,13 @@ export interface ChildProcessOptions {
     onStdout?: (text: string, context: RunParameterContext) => void
     /** Callback for intercepting text from the stderr stream. */
     onStderr?: (text: string, context: RunParameterContext) => void
+    /** Thresholds to configure warning logs */
+    warnThresholds?: {
+        /** Threshold for memory usage in bytes */
+        memory?: number
+        /** Threshold for CPU usage by percentage */
+        cpu?: number
+    }
 }
 
 export interface ChildProcessRunOptions extends Omit<ChildProcessOptions, 'logging'> {
@@ -58,8 +67,157 @@ export interface ChildProcessResult {
     stderr: string
     signal?: string
 }
-
+export const oneMB = 1024 * 1024
 export const eof = Symbol('EOF')
+export const defaultProcessWarnThresholds = {
+    memory: 100 * oneMB,
+    cpu: 50,
+}
+
+export interface ProcessStats {
+    memory: number
+    cpu: number
+}
+export class ChildProcessTracker {
+    static readonly pollingInterval: number = 10000 // Check usage every 10 seconds
+    static readonly logger = logger.getLogger('childProcess')
+    #processByPid: Map<number, ChildProcess> = new Map<number, ChildProcess>()
+    #pids: PollingSet<number>
+
+    public constructor() {
+        this.#pids = new PollingSet(ChildProcessTracker.pollingInterval, () => this.monitor())
+    }
+
+    private getThreshold(pid: number): ProcessStats {
+        if (!this.#processByPid.has(pid)) {
+            ChildProcessTracker.logOnce(pid, `Missing process with id ${pid}, returning default threshold`)
+            return defaultProcessWarnThresholds
+        }
+        // Safe to assert since it exists from check above.
+        return this.#processByPid.get(pid)!.getWarnThresholds()
+    }
+
+    private cleanUp() {
+        const terminatedProcesses = Array.from(this.#pids.values()).filter(
+            (pid: number) => this.#processByPid.get(pid)?.stopped
+        )
+        for (const pid of terminatedProcesses) {
+            this.delete(pid)
+        }
+    }
+
+    private async monitor() {
+        this.cleanUp()
+        ChildProcessTracker.logger.debug(`Active running processes size: ${this.#pids.size}`)
+
+        for (const pid of this.#pids.values()) {
+            await this.checkProcessUsage(pid)
+        }
+    }
+
+    private async checkProcessUsage(pid: number): Promise<void> {
+        if (!this.#pids.has(pid)) {
+            ChildProcessTracker.logOnce(pid, `Missing process with id ${pid}`)
+            return
+        }
+        const stats = this.getUsage(pid)
+        const threshold = this.getThreshold(pid)
+        if (stats) {
+            ChildProcessTracker.logger.debug(`Process ${pid} usage: %O`, stats)
+            if (stats.memory > threshold.memory) {
+                ChildProcessTracker.logOnce(
+                    pid,
+                    `Process ${pid} exceeded memory threshold: ${(stats.memory / oneMB).toFixed(2)} MB`
+                )
+            }
+            if (stats.cpu > threshold.cpu) {
+                ChildProcessTracker.logOnce(pid, `Process ${pid} exceeded cpu threshold: ${stats.cpu}%`)
+            }
+        }
+    }
+
+    public static logOnce = oncePerUniqueArg(
+        (_pid: number, msg: string) => {
+            ChildProcessTracker.logger.warn(msg)
+        },
+        { key: (pid, _) => `${pid}` }
+    )
+
+    public add(childProcess: ChildProcess) {
+        const pid = childProcess.pid()
+        this.#processByPid.set(pid, childProcess)
+        this.#pids.add(pid)
+    }
+
+    public delete(childProcessId: number) {
+        this.#processByPid.delete(childProcessId)
+        this.#pids.delete(childProcessId)
+    }
+
+    public get size() {
+        return this.#pids.size
+    }
+
+    public has(childProcess: ChildProcess) {
+        return this.#pids.has(childProcess.pid())
+    }
+
+    public clear() {
+        for (const childProcess of this.#processByPid.values()) {
+            childProcess.stop(true)
+        }
+        this.#pids.clear()
+        this.#processByPid.clear()
+    }
+
+    public getUsage(pid: number): ProcessStats {
+        try {
+            // isWin() leads to circular dependency.
+            return process.platform === 'win32' ? getWindowsUsage() : getUnixUsage()
+        } catch (e) {
+            ChildProcessTracker.logOnce(pid, `Failed to get process stats for ${pid}: ${e}`)
+            return { cpu: 0, memory: 0 }
+        }
+
+        function getWindowsUsage() {
+            const cpuOutput = proc
+                .execFileSync('wmic', [
+                    'path',
+                    'Win32_PerfFormattedData_PerfProc_Process',
+                    'where',
+                    `IDProcess=${pid}`,
+                    'get',
+                    'PercentProcessorTime',
+                ])
+                .toString()
+            const memOutput = proc
+                .execFileSync('wmic', ['process', 'where', `ProcessId=${pid}`, 'get', 'WorkingSetSize'])
+                .toString()
+
+            const cpuPercentage = parseFloat(cpuOutput.split('\n')[1])
+            const memoryBytes = parseInt(memOutput.split('\n')[1]) * 1024
+
+            return {
+                cpu: isNaN(cpuPercentage) ? 0 : cpuPercentage,
+                memory: memoryBytes,
+            }
+        }
+
+        function getUnixUsage() {
+            const cpuMemOutput = proc.execFileSync('ps', ['-p', pid.toString(), '-o', '%cpu,%mem']).toString()
+            const rssOutput = proc.execFileSync('ps', ['-p', pid.toString(), '-o', 'rss']).toString()
+
+            const cpuMemLines = cpuMemOutput.split('\n')[1].trim().split(/\s+/)
+            const cpuPercentage = parseFloat(cpuMemLines[0])
+            const memoryBytes = parseInt(rssOutput.split('\n')[1]) * 1024
+
+            return {
+                cpu: isNaN(cpuPercentage) ? 0 : cpuPercentage,
+                memory: memoryBytes,
+            }
+        }
+    }
+}
 
 /**
  * Convenience class to manage a child process
@@ -68,7 +226,8 @@ export const eof = Symbol('EOF')
  * - call and await run to get the results (pass or fail)
  */
 export class ChildProcess {
-    static #runningProcesses: Map<number, ChildProcess> = new Map()
+    static #runningProcesses = new ChildProcessTracker()
+    static stopTimeout = 3000
     #childProcess: proc.ChildProcess | undefined
     #processErrors: Error[] = []
     #processResult: ChildProcessResult | undefined
@@ -99,6 +258,17 @@ export class ChildProcess {
         this.#baseOptions = baseOptions
         // TODO: allow caller to use the various loggers instead of just the single one
         this.#log = baseOptions.logging !== 'no' ? logger.getLogger() : logger.getNullLogger()
+    }
+    public static async run(
+        command: string,
+        args: string[] = [],
+        options?: ChildProcessOptions
+    ): Promise<ChildProcessResult> {
+        return await new ChildProcess(command, args, options).run()
+    }
+
+    public getWarnThresholds(): ProcessStats {
+        return { ...defaultProcessWarnThresholds, ...this.#baseOptions.warnThresholds }
     }
 
     // Inspired by 'got'
@@ -229,7 +399,7 @@ export class ChildProcess {
                     if (typeof rejectOnErrorCode === 'function') {
                         reject(rejectOnErrorCode(code))
                     } else {
-                        reject(new Error(`Command exited with non-zero code: ${code}`))
+                        reject(new Error(`Command exited with non-zero code (${code}): ${this.toString()}`))
                     }
                 }
                 if (options.waitForStreams === false) {
@@ -248,6 +418,10 @@ export class ChildProcess {
      */
     public result(): ChildProcessResult | undefined {
         return this.#processResult
+    }
+
+    public proc(): proc.ChildProcess | undefined {
+        return this.#childProcess
     }
 
     public pid(): number {
@@ -278,7 +452,7 @@ export class ChildProcess {
             child.kill(signal)
 
             if (force === true) {
-                waitUntil(async () => this.stopped, { timeout: 3000, interval: 200, truthy: true })
+                waitUntil(async () => this.stopped, { timeout: ChildProcess.stopTimeout, interval: 200, truthy: true })
                     .then((stopped) => {
                         if (!stopped) {
                             child.kill('SIGKILL')
@@ -302,7 +476,7 @@ export class ChildProcess {
         if (pid === undefined) {
             return
         }
-        ChildProcess.#runningProcesses.set(pid, this)
+        ChildProcess.#runningProcesses.add(this)
 
         const timeoutListener = options?.timeout?.token.onCancellationRequested(({ agent }) => {
             const message = agent === 'user' ? 'Cancelled: ' : 'Timed out: '
@@ -312,7 +486,7 @@ export class ChildProcess {
 
         const dispose = () => {
             timeoutListener?.dispose()
-            ChildProcess.#runningProcesses.delete(pid)
+            ChildProcess.#runningProcesses.delete(this.pid())
         }
 
         process.on('exit', dispose)
@@ -362,9 +536,10 @@ export class ChildProcess {
      * Gets a string representation of the process invocation.
      *
      * @param noparams Omit parameters in the result (to protect sensitive info).
+     * @param nostatus Omit "(not started)" note.
      */
-    public toString(noparams = false): string {
-        const pid = this.pid() > 0 ? `PID ${this.pid()}:` : '(not started)'
+    public toString(noparams = false, nostatus = false): string {
+        const pid = this.pid() > 0 ? `PID ${this.pid()}:` : nostatus ? '' : '(not started)'
         return `${pid} [${this.#command} ${noparams ? '...' : this.#args.join(' ')}]`
     }
 }

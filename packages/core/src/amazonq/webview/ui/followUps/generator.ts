@@ -42,16 +42,6 @@ export class FollowUpGenerator {
 
     public generateWelcomeBlockForTab(tabType: TabType): FollowUpsBlock {
         switch (tabType) {
-            case 'featuredev':
-                return {
-                    text: 'Ask a follow up question',
-                    options: [
-                        {
-                            pillText: 'What are some examples of tasks?',
-                            type: 'DevExamples',
-                        },
-                    ],
-                }
             default:
                 return {
                     text: 'Try Examples:',

@@ -9,15 +9,15 @@ import { Credentials, Service } from 'aws-sdk'
 import * as os from 'os'
 import * as vscode from 'vscode'
 import { extensionVersion, isAutomation } from '../vscode/env'
-import { getLogger } from '../logger'
+import { getLogger } from '../logger/logger'
 import * as ClientTelemetry from './clienttelemetry'
-import { AWSProduct, MetricDatum } from './clienttelemetry'
 import apiConfig = require('./service-2.json')
 import { ServiceConfigurationOptions } from 'aws-sdk/lib/service'
 import globals from '../extensionGlobals'
 import { DevSettings } from '../settings'
 import { ClassToInterfaceType } from '../utilities/tsUtils'
 import { getComputeEnvType, getSessionId } from './util'
+import { AuthUtil } from '../../codewhisperer/util/authUtil'
 
 export const accountMetadataKey = 'awsAccount'
 export const regionKey = 'awsRegion'
@@ -57,9 +57,9 @@ export class DefaultTelemetryClient implements TelemetryClient {
     private static readonly defaultIdentityPool = 'us-east-1:820fd6d1-95c0-4ca4-bffb-3f01d32da842'
     private static readonly defaultTelemetryEndpoint = 'https://client-telemetry.us-east-1.amazonaws.com'
 
-    static #productName: AWSProduct
+    static #productName: ClientTelemetry.AWSProduct
 
-    public static set productName(val: AWSProduct) {
+    public static set productName(val: ClientTelemetry.AWSProduct) {
         getLogger().info(`Telemetry product: ${val}`)
         this.#productName = val
     }
@@ -93,7 +93,7 @@ export class DefaultTelemetryClient implements TelemetryClient {
      * Returns failed events
      * @param batch batch of events
      */
-    public async postMetrics(batch: MetricDatum[]): Promise<MetricDatum[] | undefined> {
+    public async postMetrics(batch: ClientTelemetry.MetricDatum[]): Promise<ClientTelemetry.MetricDatum[] | undefined> {
         try {
             // If our batching logic rejected all of the telemetry, don't try to post
             if (batch.length === 0) {
@@ -113,6 +113,7 @@ export class DefaultTelemetryClient implements TelemetryClient {
                         ParentProduct: vscode.env.appName,
                         ParentProductVersion: vscode.version,
                         MetricData: batch,
+                        CredentialStartUrl: AuthUtil.instance.startUrl ?? 'Undefined',
                     })
                     .promise()
                 this.logger.info(`telemetry: sent batch (size=${batch.length})`)

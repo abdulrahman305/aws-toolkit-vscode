@@ -6,18 +6,27 @@
 import * as vscode from 'vscode'
 import path from 'path'
 import { Position, TextEditor, window } from 'vscode'
-import { getLogger } from '../../../shared/logger'
+import { getLogger } from '../../../shared/logger/logger'
 import { amazonQDiffScheme, amazonQTabSuffix } from '../../../shared/constants'
 import { disposeOnEditorClose } from '../../../shared/utilities/editorUtilities'
 import {
     applyChanges,
-    createTempFileForDiff,
+    createTempUrisForDiff,
     getIndentedCode,
     getSelectionFromRange,
 } from '../../../shared/utilities/textDocumentUtilities'
-import { extractFileAndCodeSelectionFromMessage, fs, getErrorMsg, ToolkitError } from '../../../shared'
+import { ToolkitError, getErrorMsg } from '../../../shared/errors'
+import fs from '../../../shared/fs/fs'
+import { extractFileAndCodeSelectionFromMessage } from '../../../shared/utilities/textUtilities'
+import { UserWrittenCodeTracker } from '../../../codewhisperer/tracker/userWrittenCodeTracker'
+import { CWCTelemetryHelper } from '../../../codewhispererChat/controllers/chat/telemetryHelper'
+import type { ViewDiff } from '../../../codewhispererChat/controllers/chat/model'
+import type { TriggerEvent } from '../../../codewhispererChat/storages/triggerEvents'
+import { DiffContentProvider } from './diffContentProvider'
 
-class ContentProvider implements vscode.TextDocumentContentProvider {
+export type ViewDiffMessage = Pick<ViewDiff, 'code'> & Partial<Pick<TriggerEvent, 'context'>>
+
+export class ContentProvider implements vscode.TextDocumentContentProvider {
     constructor(private uri: vscode.Uri) {}
 
     provideTextDocumentContent(_uri: vscode.Uri) {
@@ -41,6 +50,8 @@ export class EditorContentController {
     ) {
         const editor = window.activeTextEditor
         if (editor) {
+            CWCTelemetryHelper.instance.setDocumentDiagnostics()
+            UserWrittenCodeTracker.instance.onQStartsMakingEdits()
             const cursorStart = editor.selection.active
             const indentRange = new vscode.Range(new vscode.Position(cursorStart.line, 0), cursorStart)
             // use the user editor intent if the position to the left of cursor is just space or tab
@@ -50,13 +61,13 @@ export class EditorContentController {
                 indent = ' '.repeat(indent.length - indent.trimStart().length)
             }
             let textWithIndent = ''
-            text.split('\n').forEach((line, index) => {
+            for (const [index, line] of text.split('\n').entries()) {
                 if (index === 0) {
                     textWithIndent += line
                 } else {
                     textWithIndent += '\n' + indent + line
                 }
-            })
+            }
             editor
                 .edit((editBuilder) => {
                     editBuilder.insert(cursorStart, textWithIndent)
@@ -66,9 +77,11 @@ export class EditorContentController {
                         if (appliedEdits) {
                             trackCodeEdit(editor, cursorStart)
                         }
+                        UserWrittenCodeTracker.instance.onQFinishesEdits()
                     },
                     (e) => {
                         getLogger().error('TextEditor.edit failed: %s', (e as Error).message)
+                        UserWrittenCodeTracker.instance.onQFinishesEdits()
                     }
                 )
         }
@@ -97,6 +110,7 @@ export class EditorContentController {
 
         if (filePath && message?.code?.trim().length > 0 && selection) {
             try {
+                UserWrittenCodeTracker.instance.onQStartsMakingEdits()
                 const doc = await vscode.workspace.openTextDocument(filePath)
 
                 const code = getIndentedCode(message, doc, selection)
@@ -130,6 +144,8 @@ export class EditorContentController {
                 const wrappedError = ChatDiffError.chain(error, `Failed to Accept Diff`, { code: chatDiffCode })
                 getLogger().error('%s: Failed to open diff view %s', chatDiffCode, getErrorMsg(wrappedError, true))
                 throw wrappedError
+            } finally {
+                UserWrittenCodeTracker.instance.onQFinishesEdits()
             }
         }
     }
@@ -146,27 +162,35 @@ export class EditorContentController {
      * isolating them from any other modifications in the original file.
      *
      * @param message the message from Amazon Q chat
+     * @param scheme the URI scheme to use for the diff view
      */
-    public async viewDiff(message: any, scheme: string = amazonQDiffScheme) {
+    public async viewDiff(message: ViewDiffMessage, scheme: string = amazonQDiffScheme) {
         const errorNotification = 'Unable to Open Diff.'
-        const { filePath, selection } = extractFileAndCodeSelectionFromMessage(message)
+        const { filePath, fileText, selection } = extractFileAndCodeSelectionFromMessage(message)
 
         try {
-            if (filePath && message?.code?.trim().length > 0 && selection) {
-                const originalFileUri = vscode.Uri.file(filePath)
-                const uri = await createTempFileForDiff(originalFileUri, message, selection, scheme)
-
+            if (filePath && message?.code !== undefined && selection) {
                 // Register content provider and show diff
-                const contentProvider = new ContentProvider(uri)
+                const contentProvider = new DiffContentProvider()
                 const disposable = vscode.workspace.registerTextDocumentContentProvider(scheme, contentProvider)
+
+                const [originalFileUri, modifiedFileUri] = await createTempUrisForDiff(
+                    filePath,
+                    fileText,
+                    message,
+                    selection,
+                    scheme,
+                    contentProvider
+                )
+
                 await vscode.commands.executeCommand(
                     'vscode.diff',
                     originalFileUri,
-                    uri,
+                    modifiedFileUri,
                     `${path.basename(filePath)} ${amazonQTabSuffix}`
                 )
 
-                disposeOnEditorClose(uri, disposable)
+                disposeOnEditorClose(originalFileUri, disposable)
             }
         } catch (error) {
             void vscode.window.showInformationMessage(errorNotification)

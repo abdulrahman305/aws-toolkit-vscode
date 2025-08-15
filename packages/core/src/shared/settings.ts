@@ -5,8 +5,7 @@
 
 import * as vscode from 'vscode'
 import * as codecatalyst from './clients/codecatalystClient'
-import * as codewhisperer from '../codewhisperer/client/codewhisperer'
-import { getLogger } from './logger'
+import { getLogger } from './logger/logger'
 import {
     cast,
     FromDescriptor,
@@ -23,6 +22,7 @@ import { telemetry } from './telemetry/telemetry'
 import globals from './extensionGlobals'
 import toolkitSettings from './settings-toolkit.gen'
 import amazonQSettings from './settings-amazonq.gen'
+import { CodeWhispererConfig } from '../codewhisperer/models/model'
 
 type Workspace = Pick<typeof vscode.workspace, 'getConfiguration' | 'onDidChangeConfiguration'>
 
@@ -389,6 +389,10 @@ function createSettingsClass<T extends TypeDescriptor>(section: string, descript
         public _getOrThrow<K extends keyof Inner>(key: K & string, defaultValue?: Inner[K]) {
             const value = this.#config.get(key, defaultValue)
 
+            if (defaultValue !== undefined && (value === undefined || value === null)) {
+                return defaultValue
+            }
+
             return cast<Inner[K]>(value, descriptor[key])
         }
 
@@ -600,7 +604,7 @@ export function fromExtensionManifest<T extends TypeDescriptor & Partial<Section
  *
  * ### Usage:
  * ```
- * if (await settings.isPromptEnabled('myPromptName')) {
+ * if (settings.isPromptEnabled('myPromptName')) {
  *     // Show some sort of prompt
  *     const userResponse = await promptUser()
  *
@@ -627,19 +631,19 @@ export class ToolkitPromptSettings
     )
     implements PromptSettings
 {
-    public async isPromptEnabled(promptName: toolkitPromptName): Promise<boolean> {
+    public isPromptEnabled(promptName: toolkitPromptName): boolean {
         try {
             return !this._getOrThrow(promptName, false)
         } catch (e) {
             this._log('prompt check for "%s" failed: %s', promptName, (e as Error).message)
-            await this.reset()
+            this.reset().catch((e) => getLogger().error(`failed to reset prompt settings: %O`, (e as Error).message))
 
             return true
         }
     }
 
     public async disablePrompt(promptName: toolkitPromptName): Promise<void> {
-        if (await this.isPromptEnabled(promptName)) {
+        if (this.isPromptEnabled(promptName)) {
             await this.update(promptName, true)
         }
     }
@@ -660,19 +664,34 @@ export class AmazonQPromptSettings
     )
     implements PromptSettings
 {
-    public async isPromptEnabled(promptName: amazonQPromptName): Promise<boolean> {
+    public isPromptEnabled(promptName: amazonQPromptName): boolean {
         try {
+            // Legacy migration for old globalState settings:
+            if (promptName === 'amazonQChatDisclaimer') {
+                const acknowledged = globals.globalState.tryGet('aws.amazonq.disclaimerAcknowledged', Boolean, false)
+                if (acknowledged) {
+                    void this.update(promptName, true)
+                    globals.globalState.tryUpdate('aws.amazonq.disclaimerAcknowledged', undefined)
+                }
+            }
+
             return !this._getOrThrow(promptName, false)
         } catch (e) {
             this._log('prompt check for "%s" failed: %s', promptName, (e as Error).message)
-            await this.reset()
+            this.reset().catch((e) => getLogger().error(`isPromptEnabled: reset() failed: %O`, (e as Error).message))
 
             return true
         }
     }
 
+    public async enablePrompt(promptName: amazonQPromptName): Promise<void> {
+        if (!this.isPromptEnabled(promptName)) {
+            await this.update(promptName, false)
+        }
+    }
+
     public async disablePrompt(promptName: amazonQPromptName): Promise<void> {
-        if (await this.isPromptEnabled(promptName)) {
+        if (this.isPromptEnabled(promptName)) {
             await this.update(promptName, true)
         }
     }
@@ -692,7 +711,7 @@ export class AmazonQPromptSettings
 type AllPromptNames = amazonQPromptName | toolkitPromptName
 
 export interface PromptSettings {
-    isPromptEnabled(promptName: AllPromptNames): Promise<boolean>
+    isPromptEnabled(promptName: AllPromptNames): boolean
     disablePrompt(promptName: AllPromptNames): Promise<void>
 }
 
@@ -726,12 +745,12 @@ export class Experiments extends Settings.define(
     'aws.experiments',
     toRecord(keys(experiments), () => Boolean)
 ) {
-    public async isExperimentEnabled(name: ExperimentName): Promise<boolean> {
+    public isExperimentEnabled(name: ExperimentName): boolean {
         try {
             return this._getOrThrow(name, false)
         } catch (error) {
             this._log(`experiment check for ${name} failed: %s`, error)
-            await this.reset()
+            this.reset().catch((e) => getLogger().error(`failed to reset experiment settings: %O`, e))
 
             return false
         }
@@ -747,7 +766,6 @@ export class Experiments extends Settings.define(
 const devSettings = {
     crashCheckInterval: Number,
     logfile: String,
-    forceCloud9: Boolean,
     forceDevMode: Boolean,
     forceInstallTools: Boolean,
     forceResolveEnv: Boolean,
@@ -758,10 +776,12 @@ const devSettings = {
     endpoints: Record(String, String),
     codecatalystService: Record(String, String),
     codewhispererService: Record(String, String),
+    amazonqLsp: Record(String, String),
+    amazonqWorkspaceLsp: Record(String, String),
     ssoCacheDirectory: String,
     autofillStartUrl: String,
     webAuth: Boolean,
-    notifications: Boolean,
+    notificationsPollInterval: Number,
 }
 type ResolvedDevSettings = FromDescriptor<typeof devSettings>
 type AwsDevSetting = keyof ResolvedDevSettings
@@ -769,7 +789,9 @@ type AwsDevSetting = keyof ResolvedDevSettings
 type ServiceClients = keyof ServiceTypeMap
 interface ServiceTypeMap {
     codecatalystService: codecatalyst.CodeCatalystConfig
-    codewhispererService: codewhisperer.CodeWhispererConfig
+    amazonqLsp: object // type is provided inside of amazon q
+    amazonqWorkspaceLsp: object // type is provided inside of amazon q
+    codewhispererService: CodeWhispererConfig
 }
 
 /**

@@ -41,13 +41,19 @@ export const toolkitSettings = {
         "ssoCacheError": {}
     },
     "aws.experiments": {
-        "jsonResourceModification": {}
+        "jsonResourceModification": {},
+        "amazonqLSP": {},
+        "amazonqLSPInline": {},
+        "amazonqChatLSP": {},
+        "amazonqLSPInlineChat": {},
+        "amazonqLSPNEP": {}
     },
     "aws.resources.enabledResources": {},
     "aws.lambda.recentlyUploaded": {},
     "aws.accessAnalyzer.policyChecks.checkNoNewAccessFilePath": {},
     "aws.accessAnalyzer.policyChecks.checkAccessNotGrantedFilePath": {},
-    "aws.accessAnalyzer.policyChecks.cloudFormationParameterFilePath": {}
+    "aws.accessAnalyzer.policyChecks.cloudFormationParameterFilePath": {},
+    "aws.sagemaker.studio.spaces.enableIdentityFiltering": {}
 }
 
 export default toolkitSettings

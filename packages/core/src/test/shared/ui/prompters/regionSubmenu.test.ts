@@ -7,7 +7,7 @@ import assert from 'assert'
 import * as sinon from 'sinon'
 import { RegionSubmenu } from '../../../../shared/ui/common/regionSubmenu'
 import { DataQuickPickItem, QuickPickPrompter } from '../../../../shared/ui/pickerPrompter'
-import { createQuickPickPrompterTester } from '../../../shared/ui/testUtils'
+import { createQuickPickPrompterTester } from '../testUtils'
 
 describe('regionSubmenu', function () {
     let submenuPrompter: RegionSubmenu<string>
@@ -89,7 +89,9 @@ describe('regionSubmenu', function () {
         submenuPrompter.activePrompter!.onDidChangeBusy((b: boolean) => {
             if (!b) {
                 const itemsAfterLabels = submenuPrompter.activePrompter!.quickPick.items.map((i) => i.label)
-                region2Data.forEach((item) => assert(itemsAfterLabels.includes(item)))
+                for (const item of region2Data) {
+                    assert(itemsAfterLabels.includes(item))
+                }
                 assert.notStrictEqual(itemsBeforeLabels, itemsAfterLabels)
             }
         })

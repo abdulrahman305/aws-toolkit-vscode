@@ -3,14 +3,23 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import * as vscode from 'vscode'
 import { waitUntil } from '../../../../shared/utilities/timeoutUtils'
 import {
     AppToWebViewMessageDispatcher,
     AuthNeededException,
     CodeReference,
+    ContextCommandData,
     EditorContextCommandMessage,
+    ExportChatMessage,
     OpenSettingsMessage,
+    OpenDetailedListMessage,
     QuickActionMessage,
+    RestoreTabMessage,
+    ShowCustomFormMessage,
+    UpdateDetailedListMessage,
+    CloseDetailedListMessage,
+    SelectTabMessage,
 } from '../../../view/connector/connector'
 import { EditorContextCommandType } from '../../../commands/registerCommands'
 import { ChatResponseStream as qdevChatResponseStream } from '@amzn/amazon-q-developer-streaming-client'
@@ -23,18 +32,20 @@ import { ChatMessage, ErrorMessage, FollowUp, Suggestion } from '../../../view/c
 import { ChatSession } from '../../../clients/chat/v0/chat'
 import { ChatException } from './model'
 import { CWCTelemetryHelper } from '../telemetryHelper'
-import { ChatPromptCommandType, TriggerPayload } from '../model'
+import { ChatPromptCommandType, DocumentReference, TriggerPayload } from '../model'
 import { getHttpStatusCode, getRequestId, ToolkitError } from '../../../../shared/errors'
 import { keys } from '../../../../shared/utilities/tsUtils'
 import { getLogger } from '../../../../shared/logger/logger'
 import { FeatureAuthState } from '../../../../codewhisperer/util/authUtil'
-import { userGuideURL } from '../../../../amazonq/webview/ui/texts/constants'
 import { CodeScanIssue } from '../../../../codewhisperer/models/model'
 import { marked } from 'marked'
 import { JSDOM } from 'jsdom'
-import { LspController } from '../../../../amazonq/lsp/lspController'
 import { extractCodeBlockLanguage } from '../../../../shared/markdown'
 import { extractAuthFollowUp } from '../../../../amazonq/util/authUtils'
+import { helpMessage } from '../../../../amazonq/webview/ui/texts/constants'
+import { ChatItem, ChatItemButton, ChatItemFormItem, DetailedList, MynahUIDataModel } from '@aws/mynah-ui'
+import { Database } from '../../../../shared/db/chatDb/chatDb'
+import { TabType } from '../../../../amazonq/webview/ui/storages/tabsStorage'
 
 export type StaticTextResponseType = 'quick-action-help' | 'onboarding-help' | 'transform' | 'help'
 
@@ -44,6 +55,8 @@ export type MessengerResponseType = {
 }
 
 export class Messenger {
+    chatHistoryDb = Database.getInstance()
+
     public constructor(
         private readonly dispatcher: AppToWebViewMessageDispatcher,
         private readonly telemetryHelper: CWCTelemetryHelper
@@ -63,7 +76,11 @@ export class Messenger {
         )
     }
 
-    public sendInitalStream(tabID: string, triggerID: string) {
+    public sendInitalStream(
+        tabID: string,
+        triggerID: string,
+        mergedRelevantDocuments: DocumentReference[] | undefined
+    ) {
         this.dispatcher.sendChatMessage(
             new ChatMessage(
                 {
@@ -73,9 +90,10 @@ export class Messenger {
                     followUpsHeader: undefined,
                     relatedSuggestions: undefined,
                     triggerID,
-                    messageID: '',
+                    messageID: triggerID,
                     userIntent: undefined,
                     codeBlockLanguage: undefined,
+                    contextList: mergedRelevantDocuments,
                 },
                 tabID
             )
@@ -91,7 +109,7 @@ export class Messenger {
      * @returns count of multi-line code blocks in response.
      */
     public async countTotalNumberOfCodeBlocks(message: string): Promise<number> {
-        //TODO: remove this when moved to server-side.
+        // TODO: remove this when moved to server-side.
         if (message === undefined) {
             return 0
         }
@@ -113,7 +131,8 @@ export class Messenger {
         session: ChatSession,
         tabID: string,
         triggerID: string,
-        triggerPayload: TriggerPayload
+        triggerPayload: TriggerPayload,
+        cancelToken: vscode.CancellationToken
     ) {
         let message = ''
         const messageID = response.$metadata.requestId ?? ''
@@ -128,18 +147,32 @@ export class Messenger {
             )
         }
         this.telemetryHelper.setResponseStreamStartTime(tabID)
+
+        let cwsprChatHasProjectContext = false
         if (
             triggerPayload.relevantTextDocuments &&
             triggerPayload.relevantTextDocuments.length > 0 &&
             triggerPayload.useRelevantDocuments === true
         ) {
-            this.telemetryHelper.setResponseFromProjectContext(messageID)
+            cwsprChatHasProjectContext = true
         }
+        const additionalCounts = this.telemetryHelper.getAdditionalContextCounts(triggerPayload)
+
+        this.telemetryHelper.setResponseFromAdditionalContext(messageID, {
+            cwsprChatHasProjectContext,
+            cwsprChatRuleContextCount: triggerPayload.workspaceRulesCount,
+            cwsprChatFileContextCount: additionalCounts.fileContextCount,
+            cwsprChatFolderContextCount: additionalCounts.folderContextCount,
+            cwsprChatPromptContextCount: additionalCounts.promptContextCount,
+        })
 
         const eventCounts = new Map<string, number>()
         waitUntil(
             async () => {
                 for await (const chatEvent of response.message!) {
+                    if (cancelToken.isCancellationRequested) {
+                        return
+                    }
                     for (const key of keys(chatEvent)) {
                         if ((chatEvent[key] as any) !== undefined) {
                             eventCounts.set(key, (eventCounts.get(key) ?? 0) + 1)
@@ -188,6 +221,7 @@ export class Messenger {
                                     messageID,
                                     userIntent: triggerPayload.userIntent,
                                     codeBlockLanguage: codeBlockLanguage,
+                                    contextList: undefined,
                                 },
                                 tabID
                             )
@@ -247,11 +281,15 @@ export class Messenger {
                 this.telemetryHelper.recordMessageResponseError(triggerPayload, tabID, statusCode ?? 0)
             })
             .finally(async () => {
-                if (
-                    triggerPayload.relevantTextDocuments &&
-                    triggerPayload.relevantTextDocuments.length > 0 &&
-                    LspController.instance.isIndexingInProgress()
-                ) {
+                if (session.sessionIdentifier) {
+                    this.chatHistoryDb.addMessage(tabID, 'cwc', session.sessionIdentifier, {
+                        body: message,
+                        type: 'answer' as any,
+                        codeReference: codeReference as any,
+                        relatedContent: { title: 'Sources', content: relatedSuggestions as any },
+                    })
+                }
+                if (triggerPayload.relevantTextDocuments && triggerPayload.relevantTextDocuments.length > 0) {
                     this.dispatcher.sendChatMessage(
                         new ChatMessage(
                             {
@@ -266,6 +304,7 @@ export class Messenger {
                                 messageID,
                                 userIntent: triggerPayload.userIntent,
                                 codeBlockLanguage: codeBlockLanguage,
+                                contextList: undefined,
                             },
                             tabID
                         )
@@ -285,6 +324,7 @@ export class Messenger {
                                 messageID,
                                 userIntent: triggerPayload.userIntent,
                                 codeBlockLanguage: undefined,
+                                contextList: undefined,
                             },
                             tabID
                         )
@@ -303,6 +343,7 @@ export class Messenger {
                             messageID,
                             userIntent: triggerPayload.userIntent,
                             codeBlockLanguage: undefined,
+                            contextList: undefined,
                         },
                         tabID
                     )
@@ -358,34 +399,7 @@ export class Messenger {
         let followUpsHeader
         switch (type) {
             case 'quick-action-help':
-                message = `I'm Amazon Q, a generative AI assistant. Learn more about me below. Your feedback will help me improve.
-                \n\n### What I can do:
-                \n\n- Answer questions about AWS
-                \n\n- Answer questions about general programming concepts
-                \n\n- Explain what a line of code or code function does
-                \n\n- Write unit tests and code
-                \n\n- Debug and fix code
-                \n\n- Refactor code
-                \n\n### What I don't do right now:
-                \n\n- Answer questions in languages other than English
-                \n\n- Remember conversations from your previous sessions
-                \n\n- Have information about your AWS account or your specific AWS resources
-                \n\n### Examples of questions I can answer:
-                \n\n- When should I use ElastiCache?
-                \n\n- How do I create an Application Load Balancer?
-                \n\n- Explain the <selected code> and ask clarifying questions about it.
-                \n\n- What is the syntax of declaring a variable in TypeScript?
-                \n\n### Special Commands
-                \n\n- /clear - Clear the conversation.
-                \n\n- /dev - Get code suggestions across files in your current project. Provide a brief prompt, such as "Implement a GET API."
-                \n\n- /transform - Transform your code. Use to upgrade Java code versions.
-                \n\n- /help - View chat topics and commands.
-                \n\n### Things to note:
-                \n\n- I may not always provide completely accurate or current information.
-                \n\n- Provide feedback by choosing the like or dislike buttons that appear below answers.
-                \n\n- When you use Amazon Q, AWS may, for service improvement purposes, store data about your usage and content. You can opt-out of sharing this data by following the steps in AI services opt-out policies. See <a href="https://docs.aws.amazon.com/amazonq/latest/qdeveloper-ug/opt-out-IDE.html">here</a>
-                \n\n- Do not enter any confidential, sensitive, or personal information.
-                \n\n*For additional help, visit the [Amazon Q User Guide](${userGuideURL}).*`
+                message = helpMessage
                 break
             case 'onboarding-help':
                 message = `### What I can do:
@@ -428,6 +442,7 @@ export class Messenger {
                     messageID: 'static_message_' + triggerID,
                     userIntent: undefined,
                     codeBlockLanguage: undefined,
+                    contextList: undefined,
                 },
                 tabID
             )
@@ -508,5 +523,45 @@ export class Messenger {
 
     public sendOpenSettingsMessage(triggerId: string, tabID: string) {
         this.dispatcher.sendOpenSettingsMessage(new OpenSettingsMessage(tabID))
+    }
+
+    public sendRestoreTabMessage(historyId: string, tabType: TabType, chats: ChatItem[], exportTab?: boolean) {
+        this.dispatcher.sendRestoreTabMessage(new RestoreTabMessage(historyId, tabType, chats, exportTab))
+    }
+
+    public sendOpenDetailedListMessage(tabId: string, listType: string, data: DetailedList) {
+        this.dispatcher.sendOpenDetailedListMessage(new OpenDetailedListMessage(tabId, listType, data))
+    }
+
+    public sendUpdateDetailedListMessage(listType: string, data: DetailedList) {
+        this.dispatcher.sendUpdateDetailedListMessage(new UpdateDetailedListMessage(listType, data))
+    }
+
+    public sendCloseDetailedListMessage(listType: string) {
+        this.dispatcher.sendCloseDetailedListMessage(new CloseDetailedListMessage(listType))
+    }
+
+    public sendSerializeTabMessage(tabId: string, uri: string, format: 'html' | 'markdown') {
+        this.dispatcher.sendSerializeTabMessage(new ExportChatMessage(tabId, format, uri))
+    }
+
+    public sendSelectTabMessage(tabId: string, eventID?: string) {
+        this.dispatcher.sendSelectTabMessage(new SelectTabMessage(tabId, eventID))
+    }
+
+    public sendContextCommandData(contextCommands: MynahUIDataModel['contextCommands']) {
+        this.dispatcher.sendContextCommandData(new ContextCommandData(contextCommands))
+    }
+
+    public showCustomForm(
+        tabID: string,
+        formItems?: ChatItemFormItem[],
+        buttons?: ChatItemButton[],
+        title?: string,
+        description?: string
+    ) {
+        this.dispatcher.sendShowCustomFormMessage(
+            new ShowCustomFormMessage(tabID, formItems, buttons, title, description)
+        )
     }
 }

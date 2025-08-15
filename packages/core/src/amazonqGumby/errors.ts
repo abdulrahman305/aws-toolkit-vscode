@@ -30,12 +30,6 @@ export class NoMavenJavaProjectsFoundError extends ToolkitError {
     }
 }
 
-export class ZipExceedsSizeLimitError extends ToolkitError {
-    constructor() {
-        super('Zip file exceeds size limit', { code: 'ZipFileExceedsSizeLimit' })
-    }
-}
-
 export class AlternateDependencyVersionsNotFoundError extends Error {
     constructor() {
         super('No available versions for dependency update')
@@ -43,7 +37,7 @@ export class AlternateDependencyVersionsNotFoundError extends Error {
 }
 
 export class JobStoppedError extends Error {
-    constructor(readonly requestId: string) {
+    constructor() {
         super('Job was rejected, stopped, or failed')
     }
 }

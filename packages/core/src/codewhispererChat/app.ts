@@ -26,8 +26,19 @@ import {
     TriggerTabIDReceived,
     UIFocusMessage,
     AcceptDiff,
+    QuickCommandGroupActionClick,
+    FileClick,
+    TabBarButtonClick,
+    SaveChatMessage,
 } from './controllers/chat/model'
 import { EditorContextCommand, registerCommands } from './commands/registerCommands'
+import {
+    ContextSelectedMessage,
+    CustomFormActionMessage,
+    DetailedListActionClickMessage,
+    DetailedListFilterChangeMessage,
+    DetailedListItemSelectMessage,
+} from './view/connector/connector'
 
 export function init(appContext: AmazonQAppInitContext) {
     const cwChatControllerEventEmitters = {
@@ -48,6 +59,16 @@ export function init(appContext: AmazonQAppInitContext) {
         processSourceLinkClick: new EventEmitter<SourceLinkClickMessage>(),
         processResponseBodyLinkClick: new EventEmitter<ResponseBodyLinkClickMessage>(),
         processFooterInfoLinkClick: new EventEmitter<FooterInfoLinkClick>(),
+        processContextCommandUpdateMessage: new EventEmitter<any>(),
+        processQuickCommandGroupActionClicked: new EventEmitter<QuickCommandGroupActionClick>(),
+        processCustomFormAction: new EventEmitter<CustomFormActionMessage>(),
+        processContextSelected: new EventEmitter<ContextSelectedMessage>(),
+        processFileClick: new EventEmitter<FileClick>(),
+        processTabBarButtonClick: new EventEmitter<TabBarButtonClick>(),
+        processSaveChat: new EventEmitter<SaveChatMessage>(),
+        processDetailedListFilterChangeMessage: new EventEmitter<DetailedListFilterChangeMessage>(),
+        processDetailedListItemSelectMessage: new EventEmitter<DetailedListItemSelectMessage>(),
+        processDetailedListActionClickMessage: new EventEmitter<DetailedListActionClickMessage>(),
     }
 
     const cwChatControllerMessageListeners = {
@@ -95,6 +116,32 @@ export function init(appContext: AmazonQAppInitContext) {
         ),
         processFooterInfoLinkClick: new MessageListener<FooterInfoLinkClick>(
             cwChatControllerEventEmitters.processFooterInfoLinkClick
+        ),
+        processContextCommandUpdateMessage: new MessageListener<void>(
+            cwChatControllerEventEmitters.processContextCommandUpdateMessage
+        ),
+        processQuickCommandGroupActionClicked: new MessageListener<QuickCommandGroupActionClick>(
+            cwChatControllerEventEmitters.processQuickCommandGroupActionClicked
+        ),
+        processCustomFormAction: new MessageListener<CustomFormActionMessage>(
+            cwChatControllerEventEmitters.processCustomFormAction
+        ),
+        processContextSelected: new MessageListener<ContextSelectedMessage>(
+            cwChatControllerEventEmitters.processContextSelected
+        ),
+        processFileClick: new MessageListener<FileClick>(cwChatControllerEventEmitters.processFileClick),
+        processTabBarButtonClick: new MessageListener<TabBarButtonClick>(
+            cwChatControllerEventEmitters.processTabBarButtonClick
+        ),
+        processSaveChat: new MessageListener<SaveChatMessage>(cwChatControllerEventEmitters.processSaveChat),
+        processDetailedListFilterChangeMessage: new MessageListener<DetailedListFilterChangeMessage>(
+            cwChatControllerEventEmitters.processDetailedListFilterChangeMessage
+        ),
+        processDetailedListItemSelectMessage: new MessageListener<DetailedListItemSelectMessage>(
+            cwChatControllerEventEmitters.processDetailedListItemSelectMessage
+        ),
+        processDetailedListActionClickMessage: new MessageListener<DetailedListActionClickMessage>(
+            cwChatControllerEventEmitters.processDetailedListActionClickMessage
         ),
     }
 
@@ -146,6 +193,32 @@ export function init(appContext: AmazonQAppInitContext) {
         processFooterInfoLinkClick: new MessagePublisher<FooterInfoLinkClick>(
             cwChatControllerEventEmitters.processFooterInfoLinkClick
         ),
+        processContextCommandUpdateMessage: new MessagePublisher<void>(
+            cwChatControllerEventEmitters.processContextCommandUpdateMessage
+        ),
+        processQuickCommandGroupActionClicked: new MessagePublisher<QuickCommandGroupActionClick>(
+            cwChatControllerEventEmitters.processQuickCommandGroupActionClicked
+        ),
+        processCustomFormAction: new MessagePublisher<CustomFormActionMessage>(
+            cwChatControllerEventEmitters.processCustomFormAction
+        ),
+        processContextSelected: new MessagePublisher<ContextSelectedMessage>(
+            cwChatControllerEventEmitters.processContextSelected
+        ),
+        processFileClick: new MessagePublisher<FileClick>(cwChatControllerEventEmitters.processFileClick),
+        processTabBarButtonClick: new MessagePublisher<TabBarButtonClick>(
+            cwChatControllerEventEmitters.processTabBarButtonClick
+        ),
+        processSaveChat: new MessagePublisher<SaveChatMessage>(cwChatControllerEventEmitters.processSaveChat),
+        processDetailedListActionClickMessage: new MessagePublisher<DetailedListActionClickMessage>(
+            cwChatControllerEventEmitters.processDetailedListActionClickMessage
+        ),
+        processDetailedListFilterChangeMessage: new MessagePublisher<DetailedListFilterChangeMessage>(
+            cwChatControllerEventEmitters.processDetailedListFilterChangeMessage
+        ),
+        processDetailedListItemSelectMessage: new MessagePublisher<DetailedListItemSelectMessage>(
+            cwChatControllerEventEmitters.processDetailedListItemSelectMessage
+        ),
     }
 
     new CwChatController(
@@ -163,5 +236,5 @@ export function init(appContext: AmazonQAppInitContext) {
 
     appContext.registerWebViewToAppMessagePublisher(new MessagePublisher<any>(cwChatUIInputEventEmitter), 'cwc')
 
-    registerCommands(cwChatControllerMessagePublishers)
+    registerCommands()
 }

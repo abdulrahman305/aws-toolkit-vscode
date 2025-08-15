@@ -5,15 +5,18 @@
 
 import * as vscode from 'vscode'
 import * as nls from 'vscode-nls'
+import * as path from 'path'
 import * as localizedText from '../localizedText'
-import { getLogger } from '../../shared/logger'
+import { getLogger } from '../../shared/logger/logger'
 import { ProgressEntry } from '../../shared/vscode/window'
-import { getIdeProperties, isCloud9 } from '../extensionUtilities'
+import { getIdeProperties } from '../extensionUtilities'
 import { sleep } from './timeoutUtils'
 import { Timeout } from './timeoutUtils'
 import { addCodiconToString } from './textUtilities'
 import { getIcon, codicon } from '../icons'
 import globals from '../extensionGlobals'
+import { ToolkitError } from '../../shared/errors'
+import { fs } from '../../shared/fs/fs'
 import { openUrl } from './vsCodeUtils'
 import { AmazonQPromptSettings, ToolkitPromptSettings } from '../../shared/settings'
 import { telemetry, ToolkitShowNotification } from '../telemetry/telemetry'
@@ -141,6 +144,41 @@ export async function showViewLogsMessage(
 }
 
 /**
+ * Checks if a path exists and prompts user for overwrite confirmation if it does.
+ * @param path The file or directory path to check
+ * @param itemName The name of the item for display in the message
+ * @returns Promise<boolean> - true if should proceed (path doesn't exist or user confirmed overwrite)
+ */
+export async function handleOverwriteConflict(location: vscode.Uri): Promise<boolean> {
+    if (!(await fs.exists(location))) {
+        return true
+    }
+
+    const choice = showConfirmationMessage({
+        prompt: localize(
+            'AWS.toolkit.confirmOverwrite',
+            '{0} already exists in the selected directory, overwrite?',
+            location.fsPath
+        ),
+        confirm: localize('AWS.generic.overwrite', 'Yes'),
+        cancel: localize('AWS.generic.cancel', 'No'),
+        type: 'warning',
+    })
+
+    if (!choice) {
+        throw new ToolkitError(`Folder already exists: ${path.basename(location.fsPath)}`)
+    }
+
+    try {
+        await fs.delete(location, { recursive: true, force: true })
+    } catch (error) {
+        throw ToolkitError.chain(error, `Failed to delete existing folder: ${path.basename(location.fsPath)}`)
+    }
+
+    return true
+}
+
+/**
  * Shows a modal confirmation (warning) message with buttons to confirm or cancel.
  *
  * @param prompt the message to show.
@@ -194,7 +232,7 @@ export async function showReauthenticateMessage({
     reauthFunc: () => Promise<void>
     source?: string
 }) {
-    const shouldShow = await settings.isPromptEnabled(suppressId as any)
+    const shouldShow = settings.isPromptEnabled(suppressId as any)
     if (!shouldShow) {
         return
     }
@@ -236,7 +274,7 @@ export function showOutputMessage(message: string, outputChannel: vscode.OutputC
  *
  * @see showMessageWithCancel for an example usage
  */
-async function showProgressWithTimeout(
+export async function showProgressWithTimeout(
     options: vscode.ProgressOptions,
     timeout: Timeout,
     showAfterMs: number
@@ -247,11 +285,6 @@ async function showProgressWithTimeout(
     if (showAfterMs === 0) {
         showAfterMs = 1 // Show immediately.
     }
-    // Cloud9 doesn't support `ProgressLocation.Notification`. User won't be able to cancel.
-    if (isCloud9()) {
-        options.location = vscode.ProgressLocation.Window
-    }
-
     // See also: codecatalyst.ts:LazyProgress
     const progressPromise: Promise<vscode.Progress<{ message?: string; increment?: number }>> = new Promise(
         (resolve, reject) => {

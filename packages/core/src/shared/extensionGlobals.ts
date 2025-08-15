@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { ExtensionContext, OutputChannel, Uri } from 'vscode'
+import { ExtensionContext, LogOutputChannel, OutputChannel } from 'vscode'
 import { LoginManager } from '../auth/deprecated/loginManager'
 import { AwsResourceManager } from '../dynamicResources/awsResourceManager'
 import { AWSClientBuilder } from './awsClientBuilder'
@@ -19,6 +19,7 @@ import { UriHandler } from './vscode/uriHandler'
 import { GlobalState } from './globalState'
 import { setContext } from './vscode/setContext'
 import { getLogger } from './logger/logger'
+import { AWSClientBuilderV3 } from './awsClientBuilderV3'
 
 type Clock = Pick<
     typeof globalThis,
@@ -152,7 +153,6 @@ export function initialize(context: ExtensionContext, isWeb: boolean = false): T
         // eslint-disable-next-line aws-toolkits/no-banned-usages
         globalState: new GlobalState(context.globalState),
         manifestPaths: {} as ToolkitGlobals['manifestPaths'],
-        visualizationResourcePaths: {} as ToolkitGlobals['visualizationResourcePaths'],
         isWeb,
     })
     void setContext('aws.isWebExtHost', isWeb)
@@ -191,12 +191,13 @@ export interface ToolkitGlobals {
     /**
      * Log messages. Use `outputChannel` for application messages.
      */
-    logOutputChannel: OutputChannel
+    logOutputChannel: LogOutputChannel
     loginManager: LoginManager
     awsContextCommands: AwsContextCommands
     awsContext: AwsContext
     regionProvider: RegionProvider
     sdkClientBuilder: AWSClientBuilder
+    sdkClientBuilderV3: AWSClientBuilderV3
     telemetry: TelemetryService & { logger: TelemetryLogger }
     /** template.yaml registry. _Avoid_ calling this until it is actually needed (for SAM features). */
     templateRegistry: Promise<CloudFormationTemplateRegistry>
@@ -219,16 +220,6 @@ export interface ToolkitGlobals {
      * Keep in mind that this clock's `Date` constructor will be different than the global one when mocked.
      */
     readonly clock: Clock
-
-    visualizationResourcePaths: {
-        localWebviewScriptsPath: Uri
-        webviewBodyScript: Uri
-        visualizationLibraryCachePath: Uri
-        visualizationLibraryScript: Uri
-        visualizationLibraryCSS: Uri
-        stateMachineCustomThemePath: Uri
-        stateMachineCustomThemeCSS: Uri
-    }
 
     readonly manifestPaths: {
         endpoints: string

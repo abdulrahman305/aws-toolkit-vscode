@@ -13,7 +13,7 @@ import {
     sessionJobHistory,
     transformByQState,
 } from '../../models/model'
-import { getLogger } from '../../../shared/logger'
+import { getLogger } from '../../../shared/logger/logger'
 import { getTransformationSteps } from './transformApiHandler'
 import {
     TransformationSteps,
@@ -23,20 +23,27 @@ import {
 import { startInterval } from '../../commands/startTransformByQ'
 import { CodeTransformTelemetryState } from '../../../amazonqGumby/telemetry/codeTransformTelemetryState'
 import { convertToTimeString } from '../../../shared/datetime'
+import { AuthUtil } from '../../util/authUtil'
+import { refreshJob, readHistoryFile, HistoryObject } from './transformationHistoryHandler'
 
 export class TransformationHubViewProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'aws.amazonq.transformationHub'
     private _view?: vscode.WebviewView
     private lastClickedButton: string = ''
     private _extensionUri: vscode.Uri = globals.context.extensionUri
+    private transformationHistory: HistoryObject[] = []
     constructor() {}
     static #instance: TransformationHubViewProvider
 
     public async updateContent(
         button: 'job history' | 'plan progress',
-        startTime: number = CodeTransformTelemetryState.instance.getStartTime()
+        startTime: number = CodeTransformTelemetryState.instance.getStartTime(),
+        historyFileUpdated?: boolean
     ) {
         this.lastClickedButton = button
+        if (historyFileUpdated) {
+            this.transformationHistory = await readHistoryFile()
+        }
         if (this._view) {
             if (this.lastClickedButton === 'job history') {
                 clearInterval(transformByQState.getIntervalId())
@@ -61,18 +68,33 @@ export class TransformationHubViewProvider implements vscode.WebviewViewProvider
         return (this.#instance ??= new this())
     }
 
-    public resolveWebviewView(
+    public async resolveWebviewView(
         webviewView: vscode.WebviewView,
         context: vscode.WebviewViewResolveContext<unknown>,
         token: vscode.CancellationToken
-    ): void | Thenable<void> {
+    ) {
         this._view = webviewView
+
+        this._view.webview.onDidReceiveMessage((message) => {
+            switch (message.command) {
+                case 'refreshJob':
+                    void refreshJob(message.jobId, message.currentStatus, message.projectName)
+                    break
+                case 'openSummaryPreview':
+                    void vscode.commands.executeCommand('markdown.showPreview', vscode.Uri.file(message.filePath))
+                    break
+                case 'openDiffFile':
+                    void vscode.commands.executeCommand('vscode.open', vscode.Uri.file(message.filePath))
+                    break
+            }
+        })
 
         this._view.webview.options = {
             enableScripts: true,
             localResourceRoots: [this._extensionUri],
         }
 
+        this.transformationHistory = await readHistoryFile()
         if (this.lastClickedButton === 'job history') {
             this._view!.webview.html = this.showJobHistory()
         } else {
@@ -87,6 +109,19 @@ export class TransformationHubViewProvider implements vscode.WebviewViewProvider
     }
 
     private showJobHistory(): string {
+        const jobsToDisplay: HistoryObject[] = [...this.transformationHistory]
+        if (transformByQState.isRunning()) {
+            const current = sessionJobHistory[transformByQState.getJobId()]
+            jobsToDisplay.unshift({
+                startTime: current.startTime,
+                projectName: current.projectName,
+                status: current.status,
+                duration: current.duration,
+                diffPath: '',
+                summaryPath: '',
+                jobId: transformByQState.getJobId(),
+            })
+        }
         return `<!DOCTYPE html>
             <html lang="en">
             <head>
@@ -98,18 +133,70 @@ export class TransformationHubViewProvider implements vscode.WebviewViewProvider
             </style>
             </head>
             <body>
-            <p><b>Job Status</b></p>
+            <p><b>Transformation History</b></p>
+            <p>${CodeWhispererConstants.transformationHistoryTableDescription}</p>
             ${
-                Object.keys(sessionJobHistory).length === 0
-                    ? `<p>${CodeWhispererConstants.nothingToShowMessage}</p>`
-                    : this.getTableMarkup(sessionJobHistory[transformByQState.getJobId()])
+                jobsToDisplay.length === 0
+                    ? `<p><br>${CodeWhispererConstants.noJobHistoryMessage}</p>`
+                    : this.getTableMarkup(jobsToDisplay)
             }
+            <script>
+                const vscode = acquireVsCodeApi();
+                
+                document.addEventListener('click', (event) => {
+                    if (event.target.classList.contains('refresh-btn')) {
+                        const jobId = event.target.getAttribute('row-id');
+                        const projectName = event.target.getAttribute('proj-name');
+                        const status = event.target.getAttribute('status');
+                        vscode.postMessage({
+                            command: 'refreshJob',
+                            jobId: jobId,
+                            projectName: projectName,
+                            currentStatus: status
+                        });
+                    }
+
+                    if (event.target.classList.contains('summary-link')) {
+                        event.preventDefault();
+                        const summaryPath = event.target.getAttribute('summary-path');
+                        vscode.postMessage({
+                            command: 'openSummaryPreview',
+                            filePath: summaryPath
+                        });
+                    }
+
+                    if (event.target.classList.contains('diff-link')) {
+                        event.preventDefault();
+                        const diffPath = event.target.getAttribute('diff-path');
+                        vscode.postMessage({
+                            command: 'openDiffFile',
+                            filePath: diffPath
+                        });
+                    }
+                });
+            </script>
             </body>
             </html>`
     }
 
-    private getTableMarkup(job: { startTime: string; projectName: string; status: string; duration: string }) {
+    private getTableMarkup(history: HistoryObject[]) {
         return `
+            <style>
+            .refresh-btn {
+                border: none;
+                background: none;
+                cursor: pointer;
+                font-size: 16px;
+                color: inherit;
+            }
+            .refresh-btn:disabled {
+                opacity: 0.3;
+                cursor: not-allowed;
+            }
+            td:last-child {
+                text-align: center;
+            }
+            </style>
             <table border="1" style="border-collapse:collapse">
                 <thead>
                     <tr>
@@ -117,17 +204,48 @@ export class TransformationHubViewProvider implements vscode.WebviewViewProvider
                         <th>Project</th>
                         <th>Status</th>
                         <th>Duration</th>
-                        <th>Id</th>
+                        <th>Diff Patch</th>
+                        <th>Summary File</th>
+                        <th>Job Id</th>
+                        <th>Refresh Job</th>
                     </tr>
                 </thead>
                 <tbody>
-                <tr>
-                    <td>${job.startTime}</td>
-                    <td>${job.projectName}</td>
-                    <td>${job.status}</td>
-                    <td>${job.duration}</td>
-                    <td>${transformByQState.getJobId()}</td>
-                </tr>
+                ${history
+                    .map(
+                        (job) => `
+                    <tr>
+                        <td>${job.startTime}</td>
+                        <td>${job.projectName}</td>
+                        <td>${job.status === 'FAILED_BE' ? 'FAILED' : job.status}</td>
+                        <td>${job.duration}</td>
+                        <td>${job.diffPath ? `<a href="#" class="diff-link" diff-path="${job.diffPath}">diff.patch</a>` : ''}</td>
+                        <td>${job.summaryPath ? `<a href="#" class="summary-link" summary-path="${job.summaryPath}">summary.md</a>` : ''}</td>
+                        <td>${job.jobId}</td>
+                        <td>
+                            <button 
+                                class="refresh-btn" 
+                                row-id="${job.jobId}"
+                                proj-name="${job.projectName}"
+                                status="${job.status}"
+                                ${
+                                    transformByQState.isRunning() || transformByQState.isRefreshInProgress()
+                                        ? 'disabled title="A job is ongoing"'
+                                        : job.status === 'CANCELLED' ||
+                                            job.status === 'STOPPED' ||
+                                            job.status === 'FAILED_BE'
+                                          ? 'disabled title="Unable to refresh this job"'
+                                          : ''
+                                }
+                                
+                            >
+                                ↻
+                            </button>
+                        </td>
+                    </tr>
+                `
+                    )
+                    .join('')}
                 </tbody>
             </table>
         `
@@ -192,6 +310,8 @@ export class TransformationHubViewProvider implements vscode.WebviewViewProvider
                 return '<p><span class="spinner status-PENDING"> ↻ </span></p>'
             case 'COMPLETED':
                 return '<p><span class="status-COMPLETED"> ✓ </span></p>'
+            case 'AWAITING_CLIENT_ACTION':
+                return '<p><span class="spinner status-PENDING"> ↻ </span></p>'
             case 'FAILED':
             default:
                 return '<p><span class="status-FAILED"> 𐔧 </span></p>'
@@ -325,8 +445,19 @@ export class TransformationHubViewProvider implements vscode.WebviewViewProvider
             jobPlanProgress['generatePlan'] === StepProgress.Succeeded &&
             transformByQState.isRunning()
         ) {
-            planSteps = await getTransformationSteps(transformByQState.getJobId(), false)
-            transformByQState.setPlanSteps(planSteps)
+            try {
+                planSteps = await getTransformationSteps(
+                    transformByQState.getJobId(),
+                    AuthUtil.instance.regionProfileManager.activeRegionProfile
+                )
+                transformByQState.setPlanSteps(planSteps)
+            } catch (e: any) {
+                // no-op; re-use current plan steps and try again in next polling cycle
+                getLogger().error(
+                    `CodeTransformation: failed to get plan steps to show updates in transformation hub, continuing transformation; error = %O`,
+                    e
+                )
+            }
         }
         let progressHtml
         // for each step that has succeeded, increment activeStepId by 1
@@ -375,9 +506,11 @@ export class TransformationHubViewProvider implements vscode.WebviewViewProvider
             const isTransformFailed = jobPlanProgress['transformCode'] === StepProgress.Failed
             const progress = this.getTransformationStepProgressMarkup(planSteps, isTransformFailed)
             const latestGenericStepDetails = this.getLatestGenericStepDetails(transformByQState.getPolledJobStatus())
+            const jobId = transformByQState.getJobId()
             progressHtml = `
             <div id="progress" class="column">
                 <p><b>Transformation Progress</b> <span id="runningTime"></span></p>
+                <p>${jobId ? `Job ID: ${jobId}` : ''}</p>
                 ${waitingMarkup}
                 ${buildMarkup}
                 ${planMarkup}

@@ -4,11 +4,11 @@
  */
 
 import * as vscode from 'vscode'
-import { getLogger } from '../../../shared/logger'
+import { getLogger } from '../../../shared/logger/logger'
 import { localize } from '../../../shared/utilities/vsCodeUtils'
 import { showViewLogsMessage } from '../../../shared/utilities/messages'
 import { IotPolicyFolderNode } from '../explorer/iotPolicyFolderNode'
-import { fs } from '../../../shared'
+import { fs } from '../../../shared/fs/fs'
 
 /**
  * Creates a policy from a policy document.
@@ -33,7 +33,7 @@ export async function createPolicyCommand(node: IotPolicyFolderNode, getPolicyDo
     }
 
     try {
-        //Parse to ensure this is a valid JSON
+        // Parse to ensure this is a valid JSON
         const policyJSON = JSON.parse(data.toString())
         await node.iot.createPolicy({ policyName, policyDocument: JSON.stringify(policyJSON) })
         void vscode.window.showInformationMessage(
@@ -45,7 +45,7 @@ export async function createPolicyCommand(node: IotPolicyFolderNode, getPolicyDo
         return
     }
 
-    //Refresh the Policy Folder node
+    // Refresh the Policy Folder node
     await node.refreshNode()
 }
 

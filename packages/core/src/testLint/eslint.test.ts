@@ -12,6 +12,8 @@ describe('eslint', function () {
     it('passes eslint', function () {
         const result = runCmd(
             [
+                'node',
+                '--max-old-space-size=8192',
                 '../../node_modules/.bin/eslint',
                 '-c',
                 '../../.eslintrc.js',
@@ -27,8 +29,6 @@ describe('eslint', function () {
                 '**/types/*.d.ts',
                 '--ignore-pattern',
                 '**/src/testFixtures/**',
-                '--ignore-pattern',
-                '**/resources/js/graphStateMachine.js',
                 '--ext',
                 '.ts',
                 '../amazonq',

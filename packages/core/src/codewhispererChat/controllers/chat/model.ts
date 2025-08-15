@@ -4,12 +4,15 @@
  */
 
 import * as vscode from 'vscode'
-import { RelevantTextDocument, UserIntent } from '@amzn/codewhisperer-streaming'
+import { AdditionalContentEntry, RelevantTextDocument, UserIntent } from '@amzn/codewhisperer-streaming'
 import { MatchPolicy, CodeQuery } from '../../clients/chat/v0/model'
 import { Selection } from 'vscode'
 import { TabOpenType } from '../../../amazonq/webview/ui/storages/tabsStorage'
 import { CodeReference } from '../../view/connector/connector'
 import { Customization } from '../../../codewhisperer/client/codewhispereruserclient'
+import { QuickActionCommand } from '@aws/mynah-ui'
+import { Message } from '../../../shared/db/chatDb/util'
+import { RegionProfile } from '../../../codewhisperer/models/model'
 
 export interface TriggerTabIDReceived {
     tabID: string
@@ -102,6 +105,7 @@ export interface PromptMessage {
     command: ChatPromptCommandType | undefined
     userIntent: UserIntent | undefined
     tabID: string
+    context?: string[] | QuickActionCommand[]
 }
 
 export interface PromptAnswer {
@@ -139,6 +143,29 @@ export interface FooterInfoLinkClick {
     link: string
 }
 
+export interface TabBarButtonClick {
+    tabID: string
+    buttonId: string
+}
+
+export interface SaveChatMessage {
+    serializedChat: string
+    uri: string
+}
+
+export interface QuickCommandGroupActionClick {
+    command: string
+    actionId: string
+    tabID: string
+}
+
+export interface FileClick {
+    command: string
+    tabID: string
+    messageId: string
+    filePath: string
+}
+
 export interface ChatItemVotedMessage {
     tabID: string
     command: string
@@ -163,17 +190,63 @@ export interface TriggerPayload {
     readonly query: string | undefined
     readonly codeSelection: Selection | undefined
     readonly trigger: ChatTriggerType
-    readonly fileText: string | undefined
+    fileText: string
     readonly fileLanguage: string | undefined
     readonly filePath: string | undefined
-    message: string | undefined
+    message: string
     readonly matchPolicy: MatchPolicy | undefined
     readonly codeQuery: CodeQuery | undefined
     readonly userIntent: UserIntent | undefined
     readonly customization: Customization
-    relevantTextDocuments?: RelevantTextDocument[]
-    useRelevantDocuments?: boolean
+    readonly profile: RegionProfile | undefined
+    readonly context: string[] | QuickActionCommand[]
+    relevantTextDocuments: RelevantTextDocumentAddition[]
+    additionalContents: AdditionalContentEntryAddition[]
+    // a reference to all documents used in chat payload
+    // for providing better context transparency
+    documentReferences: DocumentReference[]
+    useRelevantDocuments: boolean
     traceId?: string
+    contextLengths: ContextLengths
+    workspaceRulesCount?: number
+    history?: Message[]
+}
+
+export type ContextLengths = {
+    additionalContextLengths: AdditionalContextLengths
+    truncatedAdditionalContextLengths: AdditionalContextLengths
+    workspaceContextLength: number
+    truncatedWorkspaceContextLength: number
+    userInputContextLength: number
+    truncatedUserInputContextLength: number
+    focusFileContextLength: number
+    truncatedFocusFileContextLength: number
+}
+
+export type AdditionalContextLengths = {
+    fileContextLength: number
+    promptContextLength: number
+    ruleContextLength: number
+}
+
+export type AdditionalContextInfo = {
+    cwsprChatFileContextCount?: number
+    cwsprChatFolderContextCount?: number
+    cwsprChatPromptContextCount?: number
+    cwsprChatRuleContextCount?: number
+    cwsprChatHasProjectContext?: boolean
+}
+
+export type LineInfo = { startLine: number; endLine: number }
+
+// TODO move this to API definition (or just use this across the codebase)
+export type RelevantTextDocumentAddition = RelevantTextDocument & LineInfo
+
+export type AdditionalContentEntryAddition = AdditionalContentEntry & { type: string; relativePath: string } & LineInfo
+
+export interface DocumentReference {
+    readonly relativeFilePath: string
+    readonly lineRanges: Array<{ first: number; second: number }>
 }
 
 export interface InsertedCode {

@@ -9,18 +9,19 @@ import { getErrorId, getTelemetryReason, getTelemetryReasonDesc, isFileNotFoundE
 import { isAutomation, isDebugInstance } from './vscode/env'
 import { DevSettings } from './settings'
 import vscode from 'vscode'
-import { telemetry } from './telemetry'
-import { Logger } from './logger'
+import { telemetry } from './telemetry/telemetry'
+import { Logger, getLogger } from './logger/logger'
 import { isNewOsSession } from './utilities/osUtils'
 import nodeFs from 'fs/promises'
 import fs from './fs/fs'
-import { getLogger } from './logger/logger'
 import { crashMonitoringDirName } from './constants'
 import { throwOnUnstableFileSystem } from './filesystemUtilities'
-import { withRetries } from './utilities/functionUtils'
 import { truncateUuid } from './crypto'
+import { waitUntil } from './utilities/timeoutUtils'
 
 const className = 'CrashMonitoring'
+
+const logger = getLogger('crashMonitoring')
 
 /**
  * Handles crash reporting for the extension.
@@ -97,7 +98,7 @@ export class CrashMonitoring {
         try {
             this.#didTryCreate = true
             const isDevMode = getIsDevMode()
-            const devModeLogger: Logger | undefined = isDevMode ? getLogger() : undefined
+            const devModeLogger: Logger | undefined = isDevMode ? logger : undefined
             const state = await crashMonitoringStateFactory() // can throw
             return (this.#instance ??= new CrashMonitoring(
                 state,
@@ -238,7 +239,7 @@ class CrashChecker {
 
     public async start() {
         {
-            this.devLogger?.debug(`crashMonitoring: checkInterval ${this.checkInterval}`)
+            this.devLogger?.debug(`checkInterval ${this.checkInterval}`)
 
             // do an initial check
             await withFailCtx('initialCrashCheck', () =>
@@ -253,7 +254,7 @@ class CrashChecker {
                     // Due to sleep+wake the heartbeat has not been sent consistently. Skip 1 crash check interval
                     // to allow for a new heartbeat to be sent
                     if (this.timeLag.didLag()) {
-                        this.devLogger?.warn('crashMonitoring: LAG detected time lag and skipped a crash check')
+                        this.devLogger?.warn('LAG detected time lag and skipped a crash check')
                         telemetry.function_call.emit({
                             className: className,
                             functionName: 'timeLag',
@@ -301,7 +302,7 @@ class CrashChecker {
                     // Example is if I hit the red square in the debug menu, it is a non-graceful shutdown. But the regular
                     // 'x' button in the Debug IDE instance is a graceful shutdown.
                     if (ext.isDebug) {
-                        devLogger?.debug(`crashMonitoring: DEBUG instance crashed: %O`, ext)
+                        devLogger?.debug(`DEBUG instance crashed: %O`, ext)
                         return
                     }
 
@@ -322,7 +323,7 @@ class CrashChecker {
                 // Sanity check: ENSURE THAT AFTER === ACTUAL or this implies that our data is out of sync
                 const afterActual = (await state.getAllExts()).map((i) => truncateUuid(i.sessionId))
                 devLogger?.debug(
-                    `crashMonitoring: CHECKED: Result of cleaning up crashed instances\nBEFORE: %O \nAFTER:  %O \nACTUAL: %O`,
+                    `CHECKED: Result of cleaning up crashed instances\nBEFORE: %O \nAFTER:  %O \nACTUAL: %O`,
                     before,
                     after,
                     afterActual
@@ -408,7 +409,7 @@ function getDefaultDependencies(): MementoStateDependencies {
         isStateStale: () => isNewOsSession(),
         sessionId: _getSessionId(),
         isDevMode: getIsDevMode(),
-        devLogger: getIsDevMode() ? getLogger() : undefined,
+        devLogger: getIsDevMode() ? logger : undefined,
     }
 }
 /**
@@ -437,8 +438,8 @@ export class FileSystemState {
     constructor(protected readonly deps: MementoStateDependencies) {
         this.stateDirPath = path.join(this.deps.workDirPath, crashMonitoringDirName)
 
-        this.deps.devLogger?.debug(`crashMonitoring: sessionId: ${this.deps.sessionId.slice(0, 8)}-...`)
-        this.deps.devLogger?.debug(`crashMonitoring: dir: ${this.stateDirPath}`)
+        this.deps.devLogger?.debug(`sessionId: ${this.deps.sessionId.slice(0, 8)}-...`)
+        this.deps.devLogger?.debug(`dir: ${this.stateDirPath}`)
     }
 
     /**
@@ -484,10 +485,15 @@ export class FileSystemState {
                     throw new CrashMonitoringError('Heartbeat write validation failed', { code: className })
                 }
 
-                this.deps.devLogger?.debug(`crashMonitoring: HEARTBEAT sent for ${truncateUuid(this.ext.sessionId)}`)
+                this.deps.devLogger?.debug(`HEARTBEAT sent for ${truncateUuid(this.ext.sessionId)}`)
             }
             const funcWithCtx = () => withFailCtx('sendHeartbeatState', func)
-            const funcWithRetries = withRetries(funcWithCtx, { maxRetries: 6, delay: 100, backoff: 2 })
+            const funcWithRetries = waitUntil(funcWithCtx, {
+                timeout: 15_000,
+                interval: 100,
+                backoff: 2,
+                retryOnFail: true,
+            })
 
             return funcWithRetries
         } catch (e) {
@@ -540,7 +546,12 @@ export class FileSystemState {
             await nodeFs.rm(filePath, { force: true })
         }
         const funcWithCtx = () => withFailCtx(ctx, func)
-        const funcWithRetries = withRetries(funcWithCtx, { maxRetries: 6, delay: 100, backoff: 2 })
+        const funcWithRetries = waitUntil(funcWithCtx, {
+            timeout: 15_000,
+            interval: 100,
+            backoff: 2,
+            retryOnFail: true,
+        })
         await funcWithRetries
     }
 
@@ -571,10 +582,10 @@ export class FileSystemState {
         return path.join(this.stateDirPath, extId + `.${this.fileSuffix}`)
     }
     public async clearState(): Promise<void> {
-        this.deps.devLogger?.debug('crashMonitoring: CLEAR_STATE: Started')
+        this.deps.devLogger?.debug('CLEAR_STATE: Started')
         await withFailCtx('clearState', async () => {
             await nodeFs.rm(this.stateDirPath, { force: true, recursive: true })
-            this.deps.devLogger?.debug('crashMonitoring: CLEAR_STATE: Succeeded')
+            this.deps.devLogger?.debug('CLEAR_STATE: Succeeded')
         })
     }
     public async getAllExts(): Promise<ExtInstanceHeartbeat[]> {
@@ -607,7 +618,7 @@ export class FileSystemState {
                 }
                 const funcWithIgnoreBadFile = () => ignoreBadFileError(loadExtFromDisk)
                 const funcWithRetries = () =>
-                    withRetries(funcWithIgnoreBadFile, { maxRetries: 6, delay: 100, backoff: 2 })
+                    waitUntil(funcWithIgnoreBadFile, { timeout: 15_000, interval: 100, backoff: 2, retryOnFail: true })
                 const funcWithCtx = () => withFailCtx('parseRunningExtFile', funcWithRetries)
                 const ext: ExtInstanceHeartbeat | undefined = await funcWithCtx()
 

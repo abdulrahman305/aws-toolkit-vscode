@@ -5,7 +5,7 @@
 
 import * as vscode from 'vscode'
 import { AWSError } from 'aws-sdk'
-import { ServiceException } from '@aws-sdk/smithy-client'
+import { ServiceException } from '@smithy/smithy-client'
 import { isThrottlingError, isTransientError } from '@smithy/service-error-classification'
 import { Result } from './telemetry/telemetry'
 import { CancellationError } from './utilities/timeoutUtils'
@@ -15,7 +15,8 @@ import type * as os from 'os'
 import { CodeWhispererStreamingServiceException } from '@amzn/codewhisperer-streaming'
 import { driveLetterRegex } from './utilities/pathUtils'
 import { getLogger } from './logger/logger'
-import { crashMonitoringDirName } from './constants'
+import { crashMonitoringDirName, uploadCodeError } from './constants'
+import { RequestCancelledError } from './request'
 
 let _username = 'unknown-user'
 let _isAutomation = false
@@ -599,7 +600,7 @@ export function isAwsError(error: unknown): error is AWSError & { error_descript
     return error instanceof Error && hasCode(error) && hasTime(error)
 }
 
-function hasCode<T>(error: T): error is T & { code: string } {
+export function hasCode<T>(error: T): error is T & { code: string } {
     return typeof (error as { code?: unknown }).code === 'string'
 }
 
@@ -618,7 +619,11 @@ function hasTime(error: Error): error is typeof error & { time: Date } {
 }
 
 export function isUserCancelledError(error: unknown): boolean {
-    return CancellationError.isUserCancelled(error) || (error instanceof ToolkitError && error.cancelled)
+    return (
+        CancellationError.isUserCancelled(error) ||
+        (error instanceof ToolkitError && error.cancelled) ||
+        error instanceof RequestCancelledError
+    )
 }
 
 /**
@@ -823,6 +828,45 @@ export class PermissionsError extends ToolkitError {
         })
 
         this.actual = o.actual
+    }
+}
+
+/**
+ * Errors extending this class are considered "errors" in service metrics.
+ */
+export class ClientError extends ToolkitError {
+    constructor(message: string, info: ErrorInformation = { code: '400' }) {
+        super(message, info)
+    }
+}
+
+/**
+ * Errors extending this class are considered "faults" in service metrics.
+ */
+export class ServiceError extends ToolkitError {
+    constructor(message: string, info: ErrorInformation = { code: '500' }) {
+        super(message, info)
+    }
+}
+
+export class UploadURLExpired extends ClientError {
+    constructor() {
+        super(
+            "I’m sorry, I wasn't able to generate code. A connection timed out or became unavailable. Please try again or check the following:\n\n- Exclude non-essential files in your workspace’s .gitignore.\n\n- Check that your network connection is stable.",
+            { code: 'UploadURLExpired' }
+        )
+    }
+}
+
+export class UploadCodeError extends ServiceError {
+    constructor(statusCode: string) {
+        super(uploadCodeError, { code: `UploadCode-${statusCode}` })
+    }
+}
+
+export class ContentLengthError extends ClientError {
+    constructor(message: string, info: ErrorInformation = { code: 'ContentLengthError' }) {
+        super(message, info)
     }
 }
 

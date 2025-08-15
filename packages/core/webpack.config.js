@@ -23,6 +23,7 @@ module.exports = (env, argv) => {
         ...baseConfig,
         entry: {
             'src/stepFunctions/asl/aslServer': './src/stepFunctions/asl/aslServer.ts',
+            'src/awsService/sagemaker/detached-server/server': './src/awsService/sagemaker/detached-server/server.ts',
         },
     }
 
@@ -33,6 +34,7 @@ module.exports = (env, argv) => {
             ...baseVueConfig.createVueEntries(),
             // The above `createVueEntries` path pattern match does not catch this:
             'src/amazonq/webview/ui/amazonq-ui': './src/amazonq/webview/ui/main.ts',
+            'src/amazonq/webview/ui/amazonq-ui-connector-adapter': './src/amazonq/webview/ui/connectorAdapter.ts',
         },
     }
 

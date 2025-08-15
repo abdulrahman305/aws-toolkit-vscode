@@ -24,13 +24,16 @@ import {
 } from '../../../auth/connection'
 import { Auth } from '../../../auth/auth'
 import { StaticProfile, StaticProfileKeyErrorMessage } from '../../../auth/credentials/types'
-import { telemetry } from '../../../shared/telemetry'
+import { telemetry } from '../../../shared/telemetry/telemetry'
 import { AuthAddConnection } from '../../../shared/telemetry/telemetry'
 import { AuthSources } from '../util'
 import { AuthEnabledFeatures, AuthError, AuthFlowState, AuthUiClick, userCancelled } from './types'
 import { DevSettings } from '../../../shared/settings'
 import { AuthSSOServer } from '../../../auth/sso/server'
 import { getLogger } from '../../../shared/logger/logger'
+import { isValidUrl } from '../../../shared/utilities/uriUtils'
+import { RegionProfile } from '../../../codewhisperer/models/model'
+import { ProfileSwitchIntent } from '../../../codewhisperer/region/regionProfileManager'
 
 export abstract class CommonAuthWebview extends VueWebview {
     private readonly className = 'CommonAuthWebview'
@@ -58,6 +61,20 @@ export abstract class CommonAuthWebview extends VueWebview {
 
     public getRegions(): Region[] {
         return globals.regionProvider.getRegions().reverse()
+    }
+
+    /**
+     * Called when the UI load process is completed, regardless of success or failure
+     *
+     * @param errorMessage IF an error is caught on the frontend, this is the message. It will result in a failure metric.
+     *                     Otherwise we assume success.
+     */
+    public setUiReady(state: 'login' | 'reauth' | 'selectProfile', errorMessage?: string) {
+        if (errorMessage) {
+            this.setLoadFailure(state, errorMessage)
+        } else {
+            this.setDidLoad(state)
+        }
     }
 
     /**
@@ -191,6 +208,10 @@ export abstract class CommonAuthWebview extends VueWebview {
     /** List current connections known by the extension for the purpose of preventing duplicates. */
     abstract listSsoConnections(): Promise<SsoConnection[]>
 
+    abstract listRegionProfiles(): Promise<RegionProfile[] | string>
+
+    abstract selectRegionProfile(profile: RegionProfile, source: ProfileSwitchIntent): Promise<void>
+
     /**
      * Emit stored metric metadata. Does not reset the stored metric metadata, because it
      * may be used for additional emits (e.g. user cancels multiple times, user cancels then logs in)
@@ -269,11 +290,20 @@ export abstract class CommonAuthWebview extends VueWebview {
         return authEnabledFeatures.join(',')
     }
 
-    getDefaultStartUrl() {
-        return DevSettings.instance.get('autofillStartUrl', '')
+    getDefaultSsoProfile(): { startUrl: string; region: string } {
+        const devSettings = DevSettings.instance.get('autofillStartUrl', '')
+        if (devSettings) {
+            return { startUrl: devSettings, region: 'us-east-1' }
+        }
+
+        return globals.globalState.tryGet('recentSso', Object, { startUrl: '', region: 'us-east-1' })
     }
 
     cancelAuthFlow() {
         AuthSSOServer.lastInstance?.cancelCurrentFlow()
+    }
+
+    validateUrl(url: string) {
+        return isValidUrl(url)
     }
 }

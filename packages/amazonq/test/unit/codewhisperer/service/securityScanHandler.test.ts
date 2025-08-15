@@ -13,42 +13,49 @@ import {
     mapToAggregatedList,
     DefaultCodeWhispererClient,
     ListCodeScanFindingsResponse,
+    pollScanJobStatus,
+    SecurityScanTimedOutError,
+    CodeWhispererConstants,
+    CodeScansState,
 } from 'aws-core-vscode/codewhisperer'
+import { timeoutUtils } from 'aws-core-vscode/shared'
 import assert from 'assert'
 import sinon from 'sinon'
 import * as vscode from 'vscode'
-import fs from 'fs' // eslint-disable-line no-restricted-imports
+import path from 'path'
 
-const mockCodeScanFindings = JSON.stringify([
-    {
-        filePath: 'workspaceFolder/python3.7-plain-sam-app/hello_world/app.py',
-        startLine: 1,
-        endLine: 1,
-        title: 'title',
-        description: {
+const buildRawCodeScanIssue = (params?: Partial<RawCodeScanIssue>): RawCodeScanIssue => ({
+    filePath: 'workspaceFolder/python3.7-plain-sam-app/hello_world/app.py',
+    startLine: 1,
+    endLine: 1,
+    title: 'title',
+    description: {
+        text: 'text',
+        markdown: 'markdown',
+    },
+    detectorId: 'detectorId',
+    detectorName: 'detectorName',
+    findingId: 'findingId',
+    relatedVulnerabilities: [],
+    severity: 'High',
+    remediation: {
+        recommendation: {
             text: 'text',
-            markdown: 'markdown',
+            url: 'url',
         },
-        detectorId: 'detectorId',
-        detectorName: 'detectorName',
-        findingId: 'findingId',
-        relatedVulnerabilities: [],
-        severity: 'High',
-        remediation: {
-            recommendation: {
-                text: 'text',
-                url: 'url',
-            },
-            suggestedFixes: [],
-        },
-        codeSnippet: [],
-    } satisfies RawCodeScanIssue,
-])
+        suggestedFixes: [],
+    },
+    codeSnippet: [],
+    ...params,
+})
 
-const mockListCodeScanFindingsResponse: Awaited<Promise<PromiseResult<ListCodeScanFindingsResponse, AWSError>>> = {
+const buildMockListCodeScanFindingsResponse = (
+    codeScanFindings: string = JSON.stringify([buildRawCodeScanIssue()]),
+    nextToken?: boolean
+): Awaited<Promise<PromiseResult<ListCodeScanFindingsResponse, AWSError>>> => ({
     $response: {
         hasNextPage: () => false,
-        nextPage: () => undefined,
+        nextPage: () => null, // eslint-disable-line unicorn/no-null
         data: undefined,
         error: undefined,
         requestId: '',
@@ -56,15 +63,15 @@ const mockListCodeScanFindingsResponse: Awaited<Promise<PromiseResult<ListCodeSc
         retryCount: 0,
         httpResponse: new HttpResponse(),
     },
-    codeScanFindings: mockCodeScanFindings,
-}
+    codeScanFindings,
+    nextToken: nextToken ? 'nextToken' : undefined,
+})
 
-// eslint-disable-next-line id-length
-const mockListCodeScanFindingsPaginatedResponse: Awaited<
-    Promise<PromiseResult<ListCodeScanFindingsResponse, AWSError>>
-> = {
-    ...mockListCodeScanFindingsResponse,
-    nextToken: 'nextToken',
+function getWorkspaceFolder(): string {
+    return (
+        vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ??
+        path.join(__dirname, '../../../../../../core/src/testFixtures/workspaceFolder')
+    )
 }
 
 describe('securityScanHandler', function () {
@@ -72,51 +79,84 @@ describe('securityScanHandler', function () {
         let mockClient: Stub<DefaultCodeWhispererClient>
         beforeEach(function () {
             mockClient = stub(DefaultCodeWhispererClient)
-            sinon.stub(fs, 'existsSync').returns(true)
-            sinon.stub(fs, 'statSync').returns({ isFile: () => true } as fs.Stats)
-        })
-
-        afterEach(function () {
-            sinon.restore()
         })
 
         it('should make ListCodeScanFindings request and aggregate findings by file path', async function () {
-            mockClient.listCodeScanFindings.resolves(mockListCodeScanFindingsResponse)
+            mockClient.listCodeScanFindings.resolves(buildMockListCodeScanFindingsResponse())
 
             const aggregatedCodeScanIssueList = await listScanResults(
                 mockClient,
                 'jobId',
                 'codeScanFindingsSchema',
-                ['projectPath'],
+                [getWorkspaceFolder()],
                 CodeAnalysisScope.PROJECT,
                 undefined
             )
 
-            assert.equal(aggregatedCodeScanIssueList.length, 2)
+            assert.equal(aggregatedCodeScanIssueList.length, 1)
             assert.equal(aggregatedCodeScanIssueList[0].issues.length, 1)
-            assert.equal(aggregatedCodeScanIssueList[1].issues.length, 1)
         })
 
         it('should handle ListCodeScanFindings request with paginated response', async function () {
             mockClient.listCodeScanFindings
                 .onFirstCall()
-                .resolves(mockListCodeScanFindingsPaginatedResponse)
+                .resolves(
+                    buildMockListCodeScanFindingsResponse(
+                        JSON.stringify([buildRawCodeScanIssue({ title: 'title1' })]),
+                        true
+                    )
+                )
                 .onSecondCall()
-                .resolves(mockListCodeScanFindingsPaginatedResponse)
+                .resolves(
+                    buildMockListCodeScanFindingsResponse(
+                        JSON.stringify([buildRawCodeScanIssue({ title: 'title2' })]),
+                        true
+                    )
+                )
                 .onThirdCall()
-                .resolves(mockListCodeScanFindingsResponse)
+                .resolves(
+                    buildMockListCodeScanFindingsResponse(
+                        JSON.stringify([buildRawCodeScanIssue({ title: 'title3' })]),
+                        false
+                    )
+                )
 
             const aggregatedCodeScanIssueList = await listScanResults(
                 mockClient,
                 'jobId',
                 'codeScanFindingsSchema',
-                ['projectPath'],
+                [getWorkspaceFolder()],
                 CodeAnalysisScope.PROJECT,
                 undefined
             )
 
-            assert.equal(aggregatedCodeScanIssueList.length, 2)
+            assert.equal(aggregatedCodeScanIssueList.length, 1)
             assert.equal(aggregatedCodeScanIssueList[0].issues.length, 3)
+        })
+
+        it('should set autoDetected based on scope', async function () {
+            mockClient.listCodeScanFindings.resolves(
+                buildMockListCodeScanFindingsResponse(JSON.stringify([buildRawCodeScanIssue()]))
+            )
+            for (const [scope, expectedValue] of [
+                [CodeAnalysisScope.FILE_AUTO, true],
+                [CodeAnalysisScope.FILE_ON_DEMAND, false],
+                [CodeAnalysisScope.PROJECT, false],
+            ] as [CodeAnalysisScope, boolean][]) {
+                const aggregatedCodeScanIssueList = await listScanResults(
+                    mockClient,
+                    'jobId',
+                    'codeScanFindingsSchema',
+                    [getWorkspaceFolder()],
+                    scope,
+                    undefined
+                )
+                assert.ok(
+                    aggregatedCodeScanIssueList.every((item) =>
+                        item.issues.every((issue) => issue.autoDetected === expectedValue)
+                    )
+                )
+            }
         })
     })
 
@@ -154,7 +194,7 @@ describe('securityScanHandler', function () {
                 { filePath: 'file2.ts', startLine: 1, endLine: 1, codeSnippet: [{ number: 1, content: 'line 1' }] },
             ])
 
-            mapToAggregatedList(codeScanIssueMap, json, editor, CodeAnalysisScope.FILE)
+            mapToAggregatedList(codeScanIssueMap, json, editor, CodeAnalysisScope.FILE_AUTO)
 
             assert.equal(codeScanIssueMap.size, 2)
             assert.equal(codeScanIssueMap.get('file1.ts')?.length, 1)
@@ -175,7 +215,7 @@ describe('securityScanHandler', function () {
                 { filePath: 'file1.ts', startLine: 3, endLine: 3, codeSnippet: [{ number: 3, content: 'line 3' }] },
             ])
 
-            mapToAggregatedList(codeScanIssueMap, json, editor, CodeAnalysisScope.FILE)
+            mapToAggregatedList(codeScanIssueMap, json, editor, CodeAnalysisScope.FILE_AUTO)
 
             assert.equal(codeScanIssueMap.size, 1)
             assert.equal(codeScanIssueMap.get('file1.ts')?.length, 2)
@@ -195,9 +235,92 @@ describe('securityScanHandler', function () {
                 { filePath: 'file1.ts', startLine: 3, endLine: 3, codeSnippet: [{ number: 3, content: '**** **' }] },
             ])
 
-            mapToAggregatedList(codeScanIssueMap, json, editor, CodeAnalysisScope.FILE)
+            mapToAggregatedList(codeScanIssueMap, json, editor, CodeAnalysisScope.FILE_AUTO)
             assert.strictEqual(codeScanIssueMap.size, 1)
             assert.strictEqual(codeScanIssueMap.get('file1.ts')?.length, 1)
+        })
+
+        it('should handle duplicate issues', function () {
+            const json = JSON.stringify([
+                {
+                    filePath: 'file1.ts',
+                    startLine: 1,
+                    endLine: 2,
+                    title: 'duplicate issue',
+                    codeSnippet: [
+                        { number: 1, content: 'line 1' },
+                        { number: 2, content: 'line 2' },
+                    ],
+                },
+                {
+                    filePath: 'file1.ts',
+                    startLine: 1,
+                    endLine: 2,
+                    title: 'duplicate issue',
+                    codeSnippet: [
+                        { number: 1, content: 'line 1' },
+                        { number: 2, content: 'line 2' },
+                    ],
+                },
+            ])
+
+            mapToAggregatedList(codeScanIssueMap, json, editor, CodeAnalysisScope.FILE_AUTO)
+            assert.strictEqual(codeScanIssueMap.size, 1)
+            assert.strictEqual(codeScanIssueMap.get('file1.ts')?.length, 1)
+        })
+    })
+
+    describe('pollScanJobStatus', function () {
+        let mockClient: Stub<DefaultCodeWhispererClient>
+        let clock: sinon.SinonFakeTimers
+        const mockJobId = 'test-job-id'
+        const mockStartTime = Date.now()
+
+        beforeEach(function () {
+            mockClient = stub(DefaultCodeWhispererClient)
+            clock = sinon.useFakeTimers({
+                shouldAdvanceTime: true,
+            })
+            sinon.stub(timeoutUtils, 'sleep').resolves()
+            sinon.stub(CodeScansState.instance, 'isScansEnabled').returns(true)
+        })
+
+        afterEach(function () {
+            sinon.restore()
+            clock.restore()
+        })
+
+        it('should return status when scan completes successfully', async function () {
+            mockClient.getCodeScan
+                .onFirstCall()
+                .resolves({ status: 'Pending', $response: { requestId: 'req1' } })
+                .onSecondCall()
+                .resolves({ status: 'Completed', $response: { requestId: 'req2' } })
+
+            const result = await pollScanJobStatus(mockClient, mockJobId, CodeAnalysisScope.FILE_AUTO, mockStartTime)
+            assert.strictEqual(result, 'Completed')
+        })
+
+        it('should throw SecurityScanTimedOutError when polling exceeds timeout for express scans', async function () {
+            mockClient.getCodeScan.resolves({ status: 'Pending', $response: { requestId: 'req1' } })
+
+            const pollPromise = pollScanJobStatus(mockClient, mockJobId, CodeAnalysisScope.FILE_AUTO, mockStartTime)
+
+            const expectedTimeoutMs = CodeWhispererConstants.expressScanTimeoutMs
+            clock.tick(expectedTimeoutMs + 1000)
+
+            await assert.rejects(() => pollPromise, SecurityScanTimedOutError)
+        })
+
+        it('should throw SecurityScanTimedOutError when polling exceeds timeout for standard scans', async function () {
+            mockClient.getCodeScan.resolves({ status: 'Pending', $response: { requestId: 'req1' } })
+
+            const pollPromise = pollScanJobStatus(mockClient, mockJobId, CodeAnalysisScope.PROJECT, mockStartTime)
+
+            const expectedTimeoutMs = CodeWhispererConstants.standardScanTimeoutMs
+            clock.tick(expectedTimeoutMs + 1000)
+
+            await assert.rejects(() => pollPromise, SecurityScanTimedOutError)
         })
     })
 })

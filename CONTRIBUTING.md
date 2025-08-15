@@ -42,8 +42,11 @@ Then clone the repository and install NPM packages:
 
 ### Run
 
-Due to the monorepo structure of the project, you must have the `aws-toolkit-vscode/packages/toolkit` folder open as root folder in the workspace.
-The easiest way to open the project: File > Open Workspace from File > choose `aws-toolkit-vscode/aws-toolkit-vscode.code-workspace`
+Due to the monorepo structure of the project, you must open the project using the
+`aws-toolkit-vscode.code-workspace` project file.
+
+1. Run the `File: Open Workspace from File...` command in vscode.
+2. Select the `aws-toolkit-vscode.code-workspace` project file.
 
 To run the extension from VSCode as a Node.js app:
 
@@ -164,8 +167,7 @@ See [web.md](./docs/web.md) for working with the web mode implementation of the 
 See [TESTPLAN.md](./docs/TESTPLAN.md) to understand the project's test
 structure, mechanics and philosophy.
 
-You can run tests directly from VSCode. Due to the monorepo structure of the project, you must have the `aws-toolkit-vscode/packages/toolkit` folder open as root folder in the workspace.
-The easiest way to open the project: File > Open Workspace from File > choose `aws-toolkit-vscode/aws-toolkit-vscode.code-workspace`
+You can run tests directly from VSCode. Due to the monorepo structure of the project, you must [open the project via the `aws-toolkit-vscode.code-workspace` project file](#run).
 
 1. Select `View > Debug`, or select the Debug pane from the sidebar.
 2. From the dropdown at the top of the Debug pane, select the `Extension Tests` configuration.
@@ -180,12 +182,13 @@ Tests will write logs to `./.test-reports/testLog.log`.
 
 #### Run a specific test
 
-To run a single test in VSCode, do any one of:
+To run a single test in VSCode, do any _one_ of the following:
 
 -   Run the _Extension Tests (current file)_ launch-config.
--   Use Mocha's [it.only()](https://mochajs.org/#exclusive-tests) or `describe.only()`.
--   Run in your terminal:
-
+    -   Note: if you don't see this in the vscode debug menu, confirm that you opened the project
+        [via the `aws-toolkit-vscode.code-workspace` project file](#run).
+-   or... Use Mocha's [it.only()](https://mochajs.org/#exclusive-tests) or `describe.only()`.
+-   or... Run in your terminal:
     -   Unix/macOS/POSIX shell:
         ```
         TEST_FILE=../core/src/test/foo.test.ts npm run test
@@ -194,8 +197,7 @@ To run a single test in VSCode, do any one of:
         ```
         $Env:TEST_FILE = "../core/src/test/foo.test.ts"; npm run test
         ```
-
--   To run all tests in a particular subdirectory, you can edit
+-   or... To run all tests in a particular subdirectory, you can edit
     `src/test/index.ts:rootTestsPath` to point to a subdirectory:
     ```
     rootTestsPath: __dirname + '/shared/sam/debugger/'
@@ -238,9 +240,12 @@ You can find documentation to create VSCode IDE settings for CodeCatalyst bluepr
 
 Before sending a pull request:
 
+1. Treat all work as PUBLIC. Private `feature/x` branches will _not_ be squash-merged at release time. This has several benefits:
+    - Avoids mistakes (accidental exposure to public)!
+    - Avoids needing to erase (squash-merge) history.
 1. Check that you are working against the latest source on the `master` branch.
-2. Check existing open, and recently merged, pull requests to make sure someone else hasn't addressed the problem already.
-3. Open an issue to discuss any significant work.
+1. Check existing open, and recently merged, pull requests to make sure someone else hasn't addressed the problem already.
+1. Open an issue to discuss any significant work.
 
 To send a pull request:
 
@@ -365,31 +370,31 @@ The `aws.dev.forceDevMode` setting enables or disables Toolkit "dev mode". Witho
         ```
         tail -F ~/awstoolkit.log
         ```
--   Use the `AWS (Developer): Watch Logs` command to watch and filter Toolkit logs (including
-    telemetry) in VSCode.
-    -   Only available if you enabled "dev mode" (`aws.dev.forceDevMode` setting, see above).
-    -   Enter text in the Debug Console filter box to show only log messages with that text. <br/>
-        <img src="./docs/images/debug-console-filter.png" alt="VSCode Debug Console" width="320"/>
+-   Use the Output panel to watch and filter Toolkit logs (including telemetry) in VSCode.
+    -   Enter text in the Output panel filter box to show only log messages with that text.
 
 #### Enabling Debug Logs
 
 How to enable more detailed debug logs in the extensions.
 If you need to report an issue attach these to give the most detailed information.
 
-1. Open the Command Palette (`cmd/ctrl` + `shift` + `p`), then search for "View Logs". Choose the correct option for the extension you want, eg: `AWS: View Logs` or `Amazon Q: View Logs`
-   ![](./docs/images/logsView.png)
+1. Open the Command Palette (`cmd/ctrl` + `shift` + `p`), then search for "View Logs". Choose either `AWS: View Logs` or `Amazon Q: View Logs`.
+    - ![](./docs/images/logsView.png)
 2. Click the gear icon on the bottom right and select `Debug`
-   ![](./docs/images/logsSetDebug.png)
-3. Click the gear icon again and select `Set As Default`. This will ensure we stay in `Debug` until explicitly changed
-   ![](./docs/images/logsSetDefault.png)
+    - ![](./docs/images/logsSetDebug.png)
+3. Click the gear icon again and select `Set As Default`. This will ensure we stay in `Debug` until explicitly changed.
+    - ![](./docs/images/logsSetDefault.png)
 4. Open the Command Palette again and select `Reload Window`.
 5. Now you should see additional `[debug]` prefixed logs in the output.
-   ![](./docs/images/logsDebugLog.png)
+    - ![](./docs/images/logsDebugLog.png)
+6. To export logs, click the kebab (`...`), select `Export Logs`, and then select the appropriate channel (`Amazon Q Logs` for Amazon Q)
+    - ![](./docs/images/openExportLogs.png)
+    - ![](./docs/images/exportAmazonQLogs.png)
 
 ### Telemetry
 
 -   See [docs/telemetry.md](./docs/telemetry.md) for guidelines on developing telemetry in this project.
--   To watch Toolkit telemetry events, use the `AWS (Developer): Watch Logs` command (see [Logging](#logging) above) and enter "telemetry" in the Debug Console filter box.
+-   To watch Toolkit telemetry events, use the `Amazon Q: View Logs` command (see [Logging](#logging) above) and enter "telemetry" in the filter box.
 
 ### Service Endpoints
 
@@ -424,6 +429,33 @@ Example:
 "aws.dev.codewhispererService": {
     "region": "us-west-2",
     "endpoint": "https://codewhisperer-gamma.example.com"
+}
+```
+
+<a name="amazonqLsp-settings">Overrides specifically for the Amazon Q language server</a> can be set using the `aws.dev.amazonqLsp` setting. This is a JSON object consisting of keys/values required to override language server: `manifestUrl`, `supportedVersions`, `id`, and `path`.
+
+Example:
+
+```json
+"aws.dev.amazonqLsp": {
+    "manifestUrl": "https://custom.url/manifest.json",
+    "supportedVersions": "4.0.0",
+    "id": "AmazonQ",
+    "path": "/custom/path/to/local/lsp/folder",
+    "ui": "/custom/path/to/chat-client/ui"
+}
+```
+
+<a name="amazonqWorkspaceLsp-settings">Overrides specifically for the Amazon Q Workspace Context language server</a> can be set using the `aws.dev.amazonqWorkspaceLsp` setting. This is a JSON object consisting of keys/values required to override language server: `manifestUrl`, `supportedVersions`, `id`, and `path`.
+
+Example:
+
+```json
+"aws.dev.amazonqWorkspaceLsp": {
+    "manifestUrl": "https://custom.url/manifest.json",
+    "supportedVersions": "4.0.0",
+    "id": "AmazonQ",
+    "path": "/custom/path/to/local/lsp/folder",
 }
 ```
 
@@ -472,6 +504,15 @@ Unlike the user setting overrides, not all of these environment variables have t
 
 -   `__CODEWHISPERER_REGION`: for aws.dev.codewhispererService.region
 -   `__CODEWHISPERER_ENDPOINT`: for aws.dev.codewhispererService.endpoint
+-   `__AMAZONQLSP_MANIFEST_URL`: for aws.dev.amazonqLsp.manifestUrl
+-   `__AMAZONQLSP_SUPPORTED_VERSIONS`: for aws.dev.amazonqLsp.supportedVersions
+-   `__AMAZONQLSP_ID`: for aws.dev.amazonqLsp.id
+-   `__AMAZONQLSP_PATH`: for aws.dev.amazonqLsp.path
+-   `__AMAZONQLSP_UI`: for aws.dev.amazonqLsp.ui
+-   `__AMAZONQWORKSPACELSP_MANIFEST_URL`: for aws.dev.amazonqWorkspaceLsp.manifestUrl
+-   `__AMAZONQWORKSPACELSP_SUPPORTED_VERSIONS`: for aws.dev.amazonqWorkspaceLsp.supportedVersions
+-   `__AMAZONQWORKSPACELSP_ID`: for aws.dev.amazonqWorkspaceLsp.id
+-   `__AMAZONQWORKSPACELSP_PATH`: for aws.dev.amazonqWorkspaceLsp.path
 
 #### Lambda
 
@@ -496,6 +537,7 @@ Unlike the user setting overrides, not all of these environment variables have t
 -   `AWS_TOOLKIT_TEST_NO_COLOR`: If the tests should include colour in their output
 -   `DEVELOPMENT_PATH`: The path to the aws toolkit vscode project
 -   `TEST_DIR` - The directory where the test runner should find the tests
+-   `AMAZONQ_FEATUREDEV_ITERATION_TEST` - Controls whether to enable multiple iteration testing for Amazon Q feature development
 
 ### SAM/CFN ("goformation") JSON schema
 
@@ -630,7 +672,7 @@ If you are contribuing visual assets from other open source repos, the source re
 ## Using new vscode APIs
 
 The minimum required vscode version specified in [package.json](https://github.com/aws/aws-toolkit-vscode/blob/07119655109bb06105a3f53bbcd86b812b32cdbe/package.json#L16)
-is decided by the version of vscode running in Cloud9 and other vscode-compatible targets.
+is decided by the version of vscode running in other supported vscode-compatible targets (e.g. web).
 
 But you can still use the latest vscode APIs, by checking the current running vscode version. For example, to use a vscode 1.64 API:
 

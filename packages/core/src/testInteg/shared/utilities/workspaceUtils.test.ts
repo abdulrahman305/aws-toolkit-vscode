@@ -9,7 +9,9 @@ import * as vscode from 'vscode'
 import {
     collectFiles,
     collectFilesForIndex,
+    CollectFilesResultItem,
     findParentProjectFile,
+    findStringInDirectory,
     getWorkspaceFoldersByPrefixes,
     getWorkspaceRelativePath,
 } from '../../../shared/utilities/workspaceUtils'
@@ -18,7 +20,7 @@ import globals from '../../../shared/extensionGlobals'
 import { CodelensRootRegistry } from '../../../shared/fs/codelensRootRegistry'
 import { createTestWorkspace, createTestWorkspaceFolder, toFile } from '../../../test/testUtil'
 import sinon from 'sinon'
-import { fs } from '../../../shared'
+import { fs, ToolkitError } from '../../../shared'
 
 describe('workspaceUtils', () => {
     let sandbox: sinon.SinonSandbox
@@ -106,7 +108,7 @@ describe('workspaceUtils', () => {
             globals.codelensRootRegistry.dispose()
         })
 
-        testScenarios.forEach((test) => {
+        for (const test of testScenarios) {
             it(test.scenario, async () => {
                 filesToDelete = test.filesToUse
                 for (const file of test.filesToUse) {
@@ -124,7 +126,7 @@ describe('workspaceUtils', () => {
                     assert.strictEqual(projectFile, test.expectedResult)
                 }
             })
-        })
+        }
     })
 
     describe('getWorkspaceRelativePath', function () {
@@ -195,7 +197,7 @@ describe('workspaceUtils', () => {
             const result = await collectFiles(
                 workspaces.map((ws) => ws.uri.fsPath),
                 workspaces,
-                false
+                { excludeByGitIgnore: false }
             )
             assert.strictEqual(
                 result.length,
@@ -255,11 +257,7 @@ describe('workspaceUtils', () => {
             await writeFile(['src', 'folder3', 'negate_test1'], fileContent)
             await writeFile(['src', 'folder3', 'negate_test6'], fileContent)
 
-            const result = (await collectFiles([workspaceFolder.uri.fsPath], [workspaceFolder], true))
-                // for some reason, uri created inline differ in subfields, so skipping them from assertion
-                .map(({ fileUri, zipFilePath, ...r }) => ({ ...r }))
-
-            result.sort((l, r) => l.relativeFilePath.localeCompare(r.relativeFilePath))
+            const result = processIndexResults(await collectFiles([workspaceFolder.uri.fsPath], [workspaceFolder]))
 
             // non-posix filePath check here is important.
             assert.deepStrictEqual(
@@ -268,41 +266,49 @@ describe('workspaceUtils', () => {
                         workspaceFolder,
                         relativeFilePath: '.gitignore',
                         fileContent: gitignoreContent,
+                        fileSizeBytes: 162,
                     },
                     {
                         workspaceFolder,
                         relativeFilePath: 'file1',
                         fileContent: 'test content',
+                        fileSizeBytes: 12,
                     },
                     {
                         workspaceFolder,
                         relativeFilePath: 'file3',
                         fileContent: 'test content',
+                        fileSizeBytes: 12,
                     },
                     {
                         workspaceFolder,
                         relativeFilePath: 'range_file9',
                         fileContent: 'test content',
+                        fileSizeBytes: 12,
                     },
                     {
                         workspaceFolder,
                         relativeFilePath: path.join('src', '.gitignore'),
                         fileContent: gitignore2,
+                        fileSizeBytes: 8,
                     },
                     {
                         workspaceFolder,
                         relativeFilePath: path.join('src', 'folder2', 'a.js'),
                         fileContent: fileContent,
+                        fileSizeBytes: 12,
                     },
                     {
                         workspaceFolder,
                         relativeFilePath: path.join('src', 'folder3', '.gitignore'),
                         fileContent: gitignore3,
+                        fileSizeBytes: 42,
                     },
                     {
                         workspaceFolder,
                         relativeFilePath: path.join('src', 'folder3', 'negate_test1'),
                         fileContent: fileContent,
+                        fileSizeBytes: 12,
                     },
                 ] satisfies typeof result,
                 result
@@ -330,10 +336,24 @@ describe('workspaceUtils', () => {
             // add a non license file too, to make sure it is returned
             await toFile(fileContent, path.join(workspace.uri.fsPath, 'non-license.md'))
 
-            const result = await collectFiles([workspace.uri.fsPath], [workspace], true)
+            const result = await collectFiles([workspace.uri.fsPath], [workspace])
 
             assert.deepStrictEqual(1, result.length)
             assert.deepStrictEqual('non-license.md', result[0].relativeFilePath)
+        })
+
+        it('throws when total size limit is exceeded (by default)', async function () {
+            const workspace = await createTestWorkspaceFolder()
+            sandbox.stub(vscode.workspace, 'workspaceFolders').value([workspace])
+
+            const fileContent = 'this is some text'
+            await toFile(fileContent, path.join(workspace.uri.fsPath, 'file1'))
+            await toFile(fileContent, path.join(workspace.uri.fsPath, 'file2'))
+
+            await assert.rejects(
+                () => collectFiles([workspace.uri.fsPath], [workspace], { maxTotalSizeBytes: 15 }),
+                (e) => e instanceof ToolkitError && e.code === 'ContentLengthError'
+            )
         })
     })
 
@@ -439,19 +459,20 @@ describe('workspaceUtils', () => {
     })
 
     describe('collectFilesForIndex', function () {
+        let workspaceFolder: vscode.WorkspaceFolder
+
+        const writeFile = (pathParts: string[], fileContent: string) => {
+            return toFile(fileContent, path.join(workspaceFolder.uri.fsPath, ...pathParts))
+        }
+
+        beforeEach(async function () {
+            workspaceFolder = await createTestWorkspaceFolder()
+            sandbox.stub(vscode.workspace, 'workspaceFolders').value([workspaceFolder])
+        })
+
         it('returns all files in the workspace not excluded by gitignore and is a supported programming language', async function () {
-            // these variables are a manual selection of settings for the test in order to test the collectFiles function
-            const fileAmount = 3
-            const fileNamePrefix = 'file'
             const fileContent = 'test content'
 
-            const workspaceFolder = await createTestWorkspace(fileAmount, { fileNamePrefix, fileContent })
-
-            const writeFile = (pathParts: string[], fileContent: string) => {
-                return toFile(fileContent, path.join(workspaceFolder.uri.fsPath, ...pathParts))
-            }
-
-            sandbox.stub(vscode.workspace, 'workspaceFolders').value([workspaceFolder])
             const gitignoreContent = `file2
             # different formats of prefixes
             /build
@@ -485,11 +506,9 @@ describe('workspaceUtils', () => {
             await writeFile(['src', 'folder3', 'negate_test1'], fileContent)
             await writeFile(['src', 'folder3', 'negate_test6'], fileContent)
 
-            const result = (await collectFilesForIndex([workspaceFolder.uri.fsPath], [workspaceFolder], true))
-                // for some reason, uri created inline differ in subfields, so skipping them from assertion
-                .map(({ fileUri, ...r }) => ({ ...r }))
-
-            result.sort((l, r) => l.relativeFilePath.localeCompare(r.relativeFilePath))
+            const result = processIndexResults(
+                await collectFilesForIndex([workspaceFolder.uri.fsPath], [workspaceFolder], true)
+            )
 
             // non-posix filePath check here is important.
             assert.deepStrictEqual(
@@ -508,5 +527,85 @@ describe('workspaceUtils', () => {
                 result
             )
         })
+
+        it('does not include build related files', async function () {
+            const fileContent = 'this is a file'
+
+            await writeFile(['bin', `ignored1`], fileContent)
+            await writeFile(['bin', `ignored2`], fileContent)
+
+            await writeFile([`a.js`], fileContent)
+            await writeFile([`b.java`], fileContent)
+
+            const result = processIndexResults(
+                await collectFilesForIndex([workspaceFolder.uri.fsPath], [workspaceFolder], true)
+            )
+
+            // non-posix filePath check here is important.
+            assert.deepStrictEqual(
+                [
+                    {
+                        workspaceFolder,
+                        relativeFilePath: 'a.js',
+                        fileSizeBytes: 14,
+                    },
+                    {
+                        workspaceFolder,
+                        relativeFilePath: 'b.java',
+                        fileSizeBytes: 14,
+                    },
+                ] satisfies typeof result,
+                result
+            )
+        })
+
+        it('returns top level files when max size is reached', async function () {
+            const fileContent = 'this is a file'
+
+            await writeFile(['path', 'to', 'file', 'bot.js'], fileContent)
+            await writeFile(['path', 'to', 'file', `bot.java`], fileContent)
+
+            await writeFile([`top.js`], fileContent)
+            await writeFile([`top.java`], fileContent)
+
+            const result = processIndexResults(
+                await collectFilesForIndex([workspaceFolder.uri.fsPath], [workspaceFolder], true, 30)
+            )
+
+            // non-posix filePath check here is important.
+            assert.deepStrictEqual(
+                [
+                    {
+                        workspaceFolder,
+                        relativeFilePath: 'top.java',
+                        fileSizeBytes: 14,
+                    },
+                    {
+                        workspaceFolder,
+                        relativeFilePath: 'top.js',
+                        fileSizeBytes: 14,
+                    },
+                ] satisfies typeof result,
+                result
+            )
+        })
+    })
+
+    describe('findStringInDirectory', function () {
+        it('prints the line with the detected string to stdout', async () => {
+            const fileAmount = 1
+            const searchStr = 'oracle.jdbc.OracleDriver'
+            const fileContent = `test content ${searchStr} more test content`
+            const workspaceFolder = await createTestWorkspace(fileAmount, { fileContent: fileContent })
+            const spawnResult = await findStringInDirectory(searchStr, workspaceFolder.uri.fsPath)
+            assert.equal(spawnResult.stdout.includes(searchStr), true)
+        })
     })
 })
+
+// for some reason, uri created inline differ in subfields, so skipping them from assertion
+function processIndexResults(results: Omit<CollectFilesResultItem, 'fileContent'>[] | CollectFilesResultItem[]) {
+    return results
+        .map(({ zipFilePath, fileUri, ...r }) => ({ ...r }))
+        .sort((l, r) => l.relativeFilePath.localeCompare(r.relativeFilePath))
+}

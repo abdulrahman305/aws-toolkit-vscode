@@ -5,7 +5,7 @@
 
 import assert from 'assert'
 import * as sinon from 'sinon'
-import { SafeEc2Instance } from '../../../shared/clients/ec2Client'
+import { Ec2Instance } from '../../../shared/clients/ec2'
 import { getIconCode } from '../../../awsService/ec2/utils'
 import { DefaultAwsContext } from '../../../shared'
 
@@ -20,25 +20,30 @@ describe('utils', async function () {
 
     describe('getIconCode', function () {
         it('gives code based on status', function () {
-            const runningInstance: SafeEc2Instance = {
+            const runningInstance: Ec2Instance = {
                 InstanceId: 'X',
                 LastSeenStatus: 'running',
             }
-            const stoppedInstance: SafeEc2Instance = {
+            const stoppedInstance: Ec2Instance = {
                 InstanceId: 'XX',
                 LastSeenStatus: 'stopped',
+            }
+            const terminatedInstance: Ec2Instance = {
+                InstanceId: 'XXX',
+                LastSeenStatus: 'terminated',
             }
 
             assert.strictEqual(getIconCode(runningInstance), 'pass')
             assert.strictEqual(getIconCode(stoppedInstance), 'circle-slash')
+            assert.strictEqual(getIconCode(terminatedInstance), 'stop')
         })
 
         it('defaults to loading~spin', function () {
-            const pendingInstance: SafeEc2Instance = {
+            const pendingInstance: Ec2Instance = {
                 InstanceId: 'X',
                 LastSeenStatus: 'pending',
             }
-            const stoppingInstance: SafeEc2Instance = {
+            const stoppingInstance: Ec2Instance = {
                 InstanceId: 'XX',
                 LastSeenStatus: 'shutting-down',
             }

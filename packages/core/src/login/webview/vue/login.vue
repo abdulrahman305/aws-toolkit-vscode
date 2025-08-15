@@ -108,8 +108,8 @@
                     @toggle="toggleItemSelection"
                     :isSelected="selectedLoginOption === LoginOption.BUILDER_ID"
                     :itemId="LoginOption.BUILDER_ID"
-                    :itemText="'with Builder ID, a personal profile from AWS'"
-                    :itemTitle="'Use for Free'"
+                    :itemText="'Free to start with a Builder ID.'"
+                    :itemTitle="'Personal account'"
                     :itemType="LoginOption.BUILDER_ID"
                     class="selectable-item bottomMargin"
                 ></SelectableItem>
@@ -118,8 +118,8 @@
                     @toggle="toggleItemSelection"
                     :isSelected="selectedLoginOption === LoginOption.ENTERPRISE_SSO"
                     :itemId="LoginOption.ENTERPRISE_SSO"
-                    :itemText="''"
-                    :itemTitle="'Use with Pro license'"
+                    :itemText="'Best for individual teams or organizations.'"
+                    :itemTitle="'Company account'"
                     :itemType="LoginOption.ENTERPRISE_SSO"
                     class="selectable-item bottomMargin"
                 ></SelectableItem>
@@ -145,6 +145,7 @@
                 ></SelectableItem>
                 <button
                     class="continue-button"
+                    id="connection-selection-continue-button"
                     :disabled="selectedLoginOption === 0"
                     v-on:click="handleContinueClick()"
                 >
@@ -193,6 +194,7 @@
                     @keydown.enter="handleContinueClick()"
                 />
                 <h4 class="start-url-error">{{ startUrlError }}</h4>
+                <h4 class="start-url-warning">{{ startUrlWarning }}</h4>
                 <div class="title topMargin">Region</div>
                 <div class="hint">AWS Region that hosts identity directory</div>
                 <select
@@ -237,6 +239,11 @@
             </button>
             <div class="header">IAM Credentials:</div>
             <div class="hint">Credentials will be added to the appropriate ~/.aws/ files</div>
+            <a
+                class="hint"
+                href="https://docs.aws.amazon.com/sdkref/latest/guide/access-iam-users.html#step1authIamUser"
+                >Learn More</a
+            >
             <div class="title topMargin">Profile Name</div>
             <div class="hint">The identifier for these credentials</div>
             <input
@@ -278,7 +285,7 @@ import { LoginOption } from './types'
 import { CommonAuthWebview } from './backend'
 import { WebviewClientFactory } from '../../../webviews/client'
 import { Region } from '../../../shared/regions/endpoints'
-import { ssoUrlFormatRegex, ssoUrlFormatMessage } from '../../../auth/sso/constants'
+import { ssoUrlFormatRegex, ssoUrlFormatMessage, urlInvalidFormatMessage } from '../../../auth/sso/constants'
 
 const client = WebviewClientFactory.create<CommonAuthWebview>()
 
@@ -340,7 +347,8 @@ export default defineComponent({
             stage: 'START' as Stage,
             regions: [] as Region[],
             startUrlError: '',
-            selectedRegion: 'us-east-1',
+            startUrlWarning: '',
+            selectedRegion: '',
             startUrl: '',
             app: this.app,
             LoginOption,
@@ -350,7 +358,9 @@ export default defineComponent({
         }
     },
     async created() {
-        this.startUrl = await this.getDefaultStartUrl()
+        const defaultSso = await this.getDefaultSso()
+        this.startUrl = defaultSso.startUrl
+        this.selectedRegion = defaultSso.region
         await this.emitUpdate('created')
     },
 
@@ -365,7 +375,7 @@ export default defineComponent({
 
         // Pre-select the first available login option
         await this.preselectLoginOption()
-        this.handleUrlInput() // validate the default startUrl
+        await this.handleUrlInput() // validate the default startUrl
     },
     methods: {
         toggleItemSelection(itemId: number) {
@@ -475,17 +485,47 @@ export default defineComponent({
                 this.stage = 'CONNECTED'
             }
         },
-        handleUrlInput() {
-            if (this.startUrl && !ssoUrlFormatRegex.test(this.startUrl)) {
-                this.startUrlError = ssoUrlFormatMessage
-            } else if (this.startUrl && this.existingStartUrls.some((url) => url === this.startUrl)) {
-                this.startUrlError =
-                    'A connection for this start URL already exists. Sign out before creating a new one.'
-            } else {
-                this.startUrlError = ''
+        async handleUrlInput() {
+            const messages = await resolveStartUrlMessages(this.startUrl, this.existingStartUrls)
+            this.startUrlError = messages.error
+            this.startUrlWarning = messages.warning
+
+            if (!messages.error && !messages.warning) {
                 void client.storeMetricMetadata({
                     credentialStartUrl: this.startUrl,
                 })
+            }
+
+            async function resolveStartUrlMessages(
+                startUrl: string | undefined,
+                existingStartUrls: string[]
+            ): Promise<{ warning: string; error: string }> {
+                // No URL
+                if (!startUrl) {
+                    return { error: '', warning: '' }
+                }
+
+                // Validate URL format
+                if (!ssoUrlFormatRegex.test(startUrl)) {
+                    console.log('Before Validate')
+                    if (await client.validateUrl(startUrl)) {
+                        console.log('After Validate')
+                        return { error: '', warning: ssoUrlFormatMessage }
+                    } else {
+                        return { error: urlInvalidFormatMessage, warning: '' }
+                    }
+                }
+
+                // Ensure that URL does not exist yet
+                if (existingStartUrls.some((url) => url === startUrl)) {
+                    return {
+                        error: 'A connection for this start URL already exists. Sign out before creating a new one.',
+                        warning: '',
+                    }
+                }
+
+                // URL is valid
+                return { error: '', warning: '' }
             }
         },
         handleRegionInput(event: any) {
@@ -531,8 +571,8 @@ export default defineComponent({
         async updateExistingStartUrls() {
             this.existingStartUrls = (await client.listSsoConnections()).map((conn) => conn.startUrl)
         },
-        async getDefaultStartUrl() {
-            return await client.getDefaultStartUrl()
+        async getDefaultSso() {
+            return await client.getDefaultSsoProfile()
         },
         handleHelpLinkClick() {
             void client.emitUiClick('auth_helpLink')
@@ -556,9 +596,21 @@ export default defineComponent({
         },
     },
 })
+
+/**
+ * The ID of the element we will use to determine that the UI has completed its initial load.
+ *
+ * This makes assumptions that we will be in a certain state of the UI (eg showing a form vs. a loading bar).
+ * So if the UI flow changes, this may need to be updated.
+ */
+export function getReadyElementId() {
+    // On every initial load, we ASSUME that the user will always be in the connection selection state,
+    // which is why we specifically look for this button.
+    return 'connection-selection-continue-button'
+}
 </script>
 
-<style>
+<style scoped>
 @import './base.css';
 
 .selectable-item {
@@ -741,6 +793,10 @@ body.vscode-high-contrast:not(body.vscode-high-contrast-light) .regionSelect {
 }
 .start-url-error {
     color: #ff0000;
+    font-size: var(--font-size-sm);
+}
+.start-url-warning {
+    color: #dfe216;
     font-size: var(--font-size-sm);
 }
 #logo {

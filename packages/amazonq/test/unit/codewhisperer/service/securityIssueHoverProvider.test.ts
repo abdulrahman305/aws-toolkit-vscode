@@ -4,20 +4,65 @@
  */
 
 import * as vscode from 'vscode'
-import { SecurityIssueHoverProvider } from 'aws-core-vscode/codewhisperer'
+import { SecurityIssueHoverProvider, SecurityIssueProvider } from 'aws-core-vscode/codewhisperer'
 import { createCodeScanIssue, createMockDocument, assertTelemetry } from 'aws-core-vscode/test'
 import assert from 'assert'
 
 describe('securityIssueHoverProvider', () => {
+    let securityIssueProvider: SecurityIssueProvider
     let securityIssueHoverProvider: SecurityIssueHoverProvider
     let mockDocument: vscode.TextDocument
     let token: vscode.CancellationTokenSource
 
     beforeEach(() => {
+        securityIssueProvider = SecurityIssueProvider.instance
         securityIssueHoverProvider = new SecurityIssueHoverProvider()
         mockDocument = createMockDocument('def two_sum(nums, target):\nfor', 'test.py', 'python')
         token = new vscode.CancellationTokenSource()
     })
+
+    function buildCommandLink(
+        command: string,
+        commandIcon: string,
+        args: any[],
+        label: string,
+        tooltip: string
+    ): string {
+        return `[$(${commandIcon}) ${label}](command:${command}?${encodeURIComponent(JSON.stringify(args))} '${tooltip}')`
+    }
+
+    function buildExpectedContent(issue: any, fileName: string, description: string, severity?: string): string {
+        const severityBadge = severity ? ` ![${severity}](severity-${severity.toLowerCase()}.svg)` : ' '
+        const commands = [
+            buildCommandLink(
+                'aws.amazonq.explainIssue',
+                'comment',
+                [issue, fileName],
+                'Explain',
+                'Explain with Amazon Q'
+            ),
+            buildCommandLink('aws.amazonq.generateFix', 'wrench', [issue, fileName], 'Fix', 'Fix with Amazon Q'),
+            buildCommandLink(
+                'aws.amazonq.security.ignore',
+                'error',
+                [issue, fileName, 'hover'],
+                'Ignore',
+                'Ignore Issue'
+            ),
+            buildCommandLink(
+                'aws.amazonq.security.ignoreAll',
+                'error',
+                [issue, 'hover'],
+                'Ignore All',
+                'Ignore Similar Issues'
+            ),
+        ]
+        return `## title${severityBadge}\n${description}\n\n${commands.join('\n | ')}\n`
+    }
+
+    function setupIssues(issues: any[]): void {
+        securityIssueProvider.issues = [{ filePath: mockDocument.fileName, issues }]
+    }
 
     it('should return hover for each issue for the current position', () => {
         const issues = [
@@ -30,70 +75,17 @@ describe('securityIssueHoverProvider', () => {
             }),
         ]
 
-        securityIssueHoverProvider.issues = [
-            {
-                filePath: mockDocument.fileName,
-                issues,
-            },
-        ]
-
+        setupIssues(issues)
         const actual = securityIssueHoverProvider.provideHover(mockDocument, new vscode.Position(0, 0), token.token)
 
         assert.strictEqual(actual.contents.length, 2)
         assert.strictEqual(
             (actual.contents[0] as vscode.MarkdownString).value,
-            '## title ![High](severity-high.svg)\n' +
-                'fix\n\n' +
-                `[$(eye) View Details](command:aws.amazonq.openSecurityIssuePanel?${encodeURIComponent(
-                    JSON.stringify([issues[0], mockDocument.fileName])
-                )} 'Open "Amazon Q Security Issue"')\n` +
-                ` | [$(comment) Explain](command:aws.amazonq.explainIssue?${encodeURIComponent(
-                    JSON.stringify([issues[0]])
-                )} 'Explain with Amazon Q')\n` +
-                ` | [$(wrench) Fix](command:aws.amazonq.applySecurityFix?${encodeURIComponent(
-                    JSON.stringify([issues[0], mockDocument.fileName, 'hover'])
-                )} 'Fix with Amazon Q')\n` +
-                '### Suggested Fix Preview\n\n' +
-                '<span class="codicon codicon-none" style="background-color:var(--vscode-editorMarkerNavigationInfo-headerBackground);">\n\n' +
-                '```undefined\n' +
-                '@@ -1,1 +1,1 @@  \n' +
-                '```\n\n' +
-                '</span>\n' +
-                '<br />\n' +
-                '<span class="codicon codicon-none" style="background-color:var(--vscode-diffEditor-unchangedCodeBackground);">\n\n' +
-                '```language\n' +
-                'first line       \n' +
-                '```\n\n' +
-                '</span>\n' +
-                '<br />\n' +
-                '<span class="codicon codicon-none" style="background-color:var(--vscode-diffEditor-removedTextBackground);">\n\n' +
-                '```diff\n' +
-                '-second line     \n' +
-                '```\n\n' +
-                '</span>\n' +
-                '<br />\n' +
-                '<span class="codicon codicon-none" style="background-color:var(--vscode-diffEditor-insertedTextBackground);">\n\n' +
-                '```diff\n' +
-                '+third line      \n' +
-                '```\n\n' +
-                '</span>\n' +
-                '<br />\n' +
-                '<span class="codicon codicon-none" style="background-color:var(--vscode-diffEditor-unchangedCodeBackground);">\n\n' +
-                '```language\n' +
-                'fourth line      \n' +
-                '```\n\n' +
-                '</span>\n\n'
+            buildExpectedContent(issues[0], mockDocument.fileName, 'fix', 'High')
         )
         assert.strictEqual(
             (actual.contents[1] as vscode.MarkdownString).value,
-            '## title ![High](severity-high.svg)\n' +
-                'recommendationText\n\n' +
-                `[$(eye) View Details](command:aws.amazonq.openSecurityIssuePanel?${encodeURIComponent(
-                    JSON.stringify([issues[1], mockDocument.fileName])
-                )} 'Open "Amazon Q Security Issue"')\n` +
-                ` | [$(comment) Explain](command:aws.amazonq.explainIssue?${encodeURIComponent(
-                    JSON.stringify([issues[1]])
-                )} 'Explain with Amazon Q')\n`
+            buildExpectedContent(issues[1], mockDocument.fileName, 'recommendationText', 'High')
         )
         assertTelemetry('codewhisperer_codeScanIssueHover', [
             { findingId: 'finding-1', detectorId: 'language/detector-1', ruleId: 'Rule-123', includesFix: true },
@@ -102,27 +94,15 @@ describe('securityIssueHoverProvider', () => {
     })
 
     it('should return empty contents if there is no issue on the current position', () => {
-        securityIssueHoverProvider.issues = [
-            {
-                filePath: mockDocument.fileName,
-                issues: [createCodeScanIssue()],
-            },
-        ]
-
+        setupIssues([createCodeScanIssue()])
         const actual = securityIssueHoverProvider.provideHover(mockDocument, new vscode.Position(2, 0), token.token)
         assert.strictEqual(actual.contents.length, 0)
     })
 
     it('should skip issues not in the current file', () => {
-        securityIssueHoverProvider.issues = [
-            {
-                filePath: 'some/path',
-                issues: [createCodeScanIssue()],
-            },
-            {
-                filePath: mockDocument.fileName,
-                issues: [createCodeScanIssue()],
-            },
+        securityIssueProvider.issues = [
+            { filePath: 'some/path', issues: [createCodeScanIssue()] },
+            { filePath: mockDocument.fileName, issues: [createCodeScanIssue()] },
         ]
         const actual = securityIssueHoverProvider.provideHover(mockDocument, new vscode.Position(0, 0), token.token)
         assert.strictEqual(actual.contents.length, 1)
@@ -130,24 +110,12 @@ describe('securityIssueHoverProvider', () => {
 
     it('should not show severity badge if undefined', () => {
         const issues = [createCodeScanIssue({ severity: undefined, suggestedFixes: [] })]
-        securityIssueHoverProvider.issues = [
-            {
-                filePath: mockDocument.fileName,
-                issues,
-            },
-        ]
+        setupIssues(issues)
         const actual = securityIssueHoverProvider.provideHover(mockDocument, new vscode.Position(0, 0), token.token)
         assert.strictEqual(actual.contents.length, 1)
         assert.strictEqual(
             (actual.contents[0] as vscode.MarkdownString).value,
-            '## title \n' +
-                'recommendationText\n\n' +
-                `[$(eye) View Details](command:aws.amazonq.openSecurityIssuePanel?${encodeURIComponent(
-                    JSON.stringify([issues[0], mockDocument.fileName])
-                )} 'Open "Amazon Q Security Issue"')\n` +
-                ` | [$(comment) Explain](command:aws.amazonq.explainIssue?${encodeURIComponent(
-                    JSON.stringify([issues[0]])
-                )} 'Explain with Amazon Q')\n`
+            buildExpectedContent(issues[0], mockDocument.fileName, 'recommendationText')
         )
     })
 
@@ -162,58 +130,18 @@ describe('securityIssueHoverProvider', () => {
                 ],
             }),
         ]
-        securityIssueHoverProvider.issues = [
-            {
-                filePath: mockDocument.fileName,
-                issues,
-            },
-        ]
+        setupIssues(issues)
         const actual = securityIssueHoverProvider.provideHover(mockDocument, new vscode.Position(0, 0), token.token)
         assert.strictEqual(actual.contents.length, 1)
         assert.strictEqual(
             (actual.contents[0] as vscode.MarkdownString).value,
-            '## title ![High](severity-high.svg)\n' +
-                'fix\n\n' +
-                `[$(eye) View Details](command:aws.amazonq.openSecurityIssuePanel?${encodeURIComponent(
-                    JSON.stringify([issues[0], mockDocument.fileName])
-                )} 'Open "Amazon Q Security Issue"')\n` +
-                ` | [$(comment) Explain](command:aws.amazonq.explainIssue?${encodeURIComponent(
-                    JSON.stringify([issues[0]])
-                )} 'Explain with Amazon Q')\n` +
-                ` | [$(wrench) Fix](command:aws.amazonq.applySecurityFix?${encodeURIComponent(
-                    JSON.stringify([issues[0], mockDocument.fileName, 'hover'])
-                )} 'Fix with Amazon Q')\n` +
-                '### Suggested Fix Preview\n\n' +
-                '<span class="codicon codicon-none" style="background-color:var(--vscode-editorMarkerNavigationInfo-headerBackground);">\n\n' +
-                '```undefined\n' +
-                '@@ -1,1 +1,1 @@  \n' +
-                '```\n\n' +
-                '</span>\n' +
-                '<br />\n' +
-                '<span class="codicon codicon-none" style="background-color:var(--vscode-diffEditor-unchangedCodeBackground);">\n\n' +
-                '```language\n' +
-                'first line       \n' +
-                '```\n\n' +
-                '</span>\n' +
-                '<br />\n' +
-                '<span class="codicon codicon-none" style="background-color:var(--vscode-diffEditor-removedTextBackground);">\n\n' +
-                '```diff\n' +
-                '-second line     \n' +
-                '-third line      \n' +
-                '```\n\n' +
-                '</span>\n' +
-                '<br />\n' +
-                '<span class="codicon codicon-none" style="background-color:var(--vscode-diffEditor-insertedTextBackground);">\n\n' +
-                '```diff\n' +
-                '+fourth line     \n' +
-                '```\n\n' +
-                '</span>\n' +
-                '<br />\n' +
-                '<span class="codicon codicon-none" style="background-color:var(--vscode-diffEditor-unchangedCodeBackground);">\n\n' +
-                '```language\n' +
-                'fifth line       \n' +
-                '```\n\n' +
-                '</span>\n\n'
+            buildExpectedContent(issues[0], mockDocument.fileName, 'fix', 'High')
         )
+    })
+
+    it('should not show issues that are not visible', () => {
+        setupIssues([createCodeScanIssue({ visible: false })])
+        const actual = securityIssueHoverProvider.provideHover(mockDocument, new vscode.Position(0, 0), token.token)
+        assert.strictEqual(actual.contents.length, 0)
     })
 })

@@ -1,6 +1,21 @@
 {
     "types": [
         {
+            "name": "amazonQProfileRegion",
+            "type": "string",
+            "description": "Region of the Q Profile associated with a metric\n- \"n/a\" if metric is not associated with a profile or region.\n- \"not-set\" if metric is associated with a profile, but profile is unknown."
+        },
+        {
+            "name": "ssoRegion",
+            "type": "string",
+            "description": "Region of the current SSO connection. Typically associated with credentialStartUrl\n- \"n/a\" if metric is not associated with a region.\n- \"not-set\" if metric is associated with a region, but region is unknown."
+        },
+        {
+            "name": "profileCount",
+            "type": "int",
+            "description": "The number of profiles that were available to choose from"
+        },
+        {
             "name": "amazonGenerateApproachLatency",
             "type": "double",
             "description": "The time it takes to generate approach response"
@@ -23,6 +38,11 @@
             "description": "SSM Publish Document operation type"
         },
         {
+            "name": "isInvalidJson",
+            "type": "boolean",
+            "description": "Indicates whether the message contains an invalid JSON definition."
+        },
+        {
             "name": "starterTemplate",
             "type": "string",
             "description": "Starter template chosen during create document"
@@ -43,50 +63,14 @@
             "description": "Installed CLI"
         },
         {
-            "name": "cwsprChatTriggerInteraction",
-            "type": "string",
-            "allowedValues": ["hotkeys", "click", "contextMenu"],
-            "description": "Identifies the specific interaction that opens the chat panel"
-        },
-        {
-            "name": "cwsprChatConversationId",
-            "type": "string",
-            "description": "Unique identifier for each conversation"
-        },
-        {
-            "name": "cwsprChatUserIntent",
-            "type": "string",
-            "allowedValues": [
-                "suggestAlternateImplementation",
-                "applyCommonBestPractices",
-                "improveCode",
-                "showExample",
-                "citeSources",
-                "explainLineByLine",
-                "explainCodeSelection",
-                "generateUnitTests"
-            ],
-            "description": "Explict user intent associated with a chat message"
-        },
-        {
-            "name": "cwsprChatHasCodeSnippet",
-            "type": "boolean",
-            "description": "true if user has selected code snippet, false otherwise."
-        },
-        {
-            "name": "cwsprChatHasProjectContext",
-            "type": "boolean",
-            "description": "true if query has project level context, false otherwise."
-        },
-        {
-            "name": "cwsprChatProjectContextQueryMs",
-            "type": "int",
-            "description": "Query latency in ms for local project context"
-        },
-        {
             "name": "amazonqIndexFileSizeInMB",
             "type": "int",
             "description": "The sum of file sizes that were indexed in MB"
+        },
+        {
+            "name": "amazonqVectorIndexEnabled",
+            "type": "boolean",
+            "description": "True if vector index is enabled"
         },
         {
             "name": "amazonqIndexFileCount",
@@ -102,107 +86,6 @@
             "name": "amazonqIndexCpuUsagePercentage",
             "type": "int",
             "description": "CPU used by LSP server as a percentage of all available CPUs on the system"
-        },
-        {
-            "name": "cwsprChatConversationType",
-            "type": "string",
-            "allowedValues": ["Chat", "Assign", "Transform"],
-            "description": "Identifies the type of conversation"
-        },
-        {
-            "name": "cwsprChatMessageId",
-            "type": "string",
-            "description": "Unique identifier for each message in an conversation"
-        },
-        {
-            "name": "cwsprChatActiveEditorTotalCharacters",
-            "type": "int",
-            "description": "Total number of characters in the active editor"
-        },
-        {
-            "name": "cwsprChatActiveEditorImportCount",
-            "type": "int",
-            "description": "Number of import statements in the active editor"
-        },
-        {
-            "name": "cwsprChatResponseCodeSnippetCount",
-            "type": "int",
-            "description": "Number of code snippets in response"
-        },
-        {
-            "name": "cwsprChatResponseCode",
-            "type": "int",
-            "description": "HTTP response code for message API invocation"
-        },
-        {
-            "name": "cwsprChatResponseErrorReason",
-            "type": "string",
-            "description": "Client error reason when processing response stream"
-        },
-        {
-            "name": "cwsprChatSourceLinkCount",
-            "type": "int",
-            "description": "Number of links in response"
-        },
-        {
-            "name": "cwsprChatReferencesCount",
-            "type": "int",
-            "description": "Number of references in response"
-        },
-        {
-            "name": "cwsprChatFollowUpCount",
-            "type": "int",
-            "description": "Number of follow ups in response"
-        },
-        {
-            "name": "cwsprChatTimeToFirstChunk",
-            "type": "int",
-            "description": "The time between when the conversation id was created and when we got back the first usable result"
-        },
-        {
-            "name": "cwsprChatTimeBetweenChunks",
-            "type": "string",
-            "description": "An array of time when successive chunks of data are received from the server"
-        },
-        {
-            "name": "cwsprChatFullResponseLatency",
-            "type": "int",
-            "description": "The time between when the conversation id was created and the final response from the server was received"
-        },
-        {
-            "name": "cwsprChatTimeToFirstUsableChunk",
-            "type": "int",
-            "description": "The time between the initial server request, including creating the conversation id, and the first usable result"
-        },
-        {
-            "name": "cwsprChatFullServerResponseLatency",
-            "type": "int",
-            "description": "The time between the initial server request, including creating the conversation id, and the final response from the server"
-        },
-        {
-            "name": "cwsprChatTimeToFirstDisplay",
-            "type": "int",
-            "description": "The time between the user pressing enter and when the first chunk of data is displayed to the user"
-        },
-        {
-            "name": "cwsprChatTimeBetweenDisplays",
-            "type": "string",
-            "description": "An array of time when successive chunks of server responses are displayed to the user"
-        },
-        {
-            "name": "cwsprChatFullDisplayLatency",
-            "type": "int",
-            "description": "The time between the user pressing enter and the entire response being rendered"
-        },
-        {
-            "name": "cwsprChatResponseLength",
-            "type": "int",
-            "description": "Number of characters in response"
-        },
-        {
-            "name": "cwsprChatRequestLength",
-            "type": "int",
-            "description": "Number of characters in request"
         },
         {
             "name": "cwsprChatInteractionTarget",
@@ -350,9 +233,75 @@
             "name": "amazonqMessageDisplayedMs",
             "type": "int",
             "description": "Duration between the partner teams code receiving the message and when the message was finally displayed in ms"
+        },
+        {
+            "name": "executedCount",
+            "type": "int",
+            "description": "The number of executed operations"
         }
     ],
     "metrics": [
+        {
+            "name": "sagemaker_openRemoteConnection",
+            "description": "Perform a connection to a SageMaker Space",
+            "metadata": [
+                {
+                    "type": "result"
+                }
+            ]
+        },
+        {
+            "name": "sagemaker_stopSpace",
+            "description": "Stop a SageMaker Space",
+            "metadata": [
+                {
+                    "type": "result"
+                }
+            ]
+        },
+        {
+            "name": "sagemaker_filterSpaces",
+            "description": "Filter SageMaker Spaces",
+            "metadata": [
+                {
+                    "type": "result"
+                }
+            ]
+        },
+        {
+            "name": "sagemaker_deeplinkConnect",
+            "description": "Connect to SageMake Space via a deeplink",
+            "metadata": [
+                {
+                    "type": "result"
+                }
+            ]
+        },
+        {
+            "name": "amazonq_didSelectProfile",
+            "description": "Emitted after the user's Q Profile has been set, whether the user was prompted with a dialog, or a profile was automatically assigned after signing in.",
+            "metadata": [
+                { "type": "source" },
+                { "type": "amazonQProfileRegion" },
+                { "type": "result" },
+                { "type": "ssoRegion", "required": false },
+                { "type": "credentialStartUrl", "required": false },
+                { "type": "profileCount", "required": false }
+            ],
+            "passive": true
+        },
+        {
+            "name": "amazonq_profileState",
+            "description": "Indicates a change in the user's Q Profile state",
+            "metadata": [
+                { "type": "source" },
+                { "type": "amazonQProfileRegion" },
+                { "type": "result" },
+                { "type": "ssoRegion", "required": false },
+                { "type": "credentialStartUrl", "required": false }
+            ],
+            "passive": true
+        },
         {
             "name": "ide_fileSystem",
             "description": "File System event on execution",
@@ -514,6 +463,47 @@
         {
             "name": "stepfunctions_previewstatemachine",
             "description": ""
+        },
+        {
+            "name": "stepfunctions_openWorkflowStudio",
+            "description": "Called after opening asl file in Step Functions Workflow Studio",
+            "metadata": [
+                {
+                    "type": "id",
+                    "required": true
+                }
+            ]
+        },
+        {
+            "name": "stepfunctions_closeWorkflowStudio",
+            "description": "Called after closing Step Functions Workflow Studio custom editor",
+            "metadata": [
+                {
+                    "type": "id",
+                    "required": true
+                }
+            ]
+        },
+        {
+            "name": "stepfunctions_saveFile",
+            "description": "Triggered when Workflow Studio auto-syncs to the local file or when unsaved local changes are saved from Workflow Studio or VSCode.",
+            "metadata": [
+                {
+                    "type": "id",
+                    "required": true
+                },
+                {
+                    "type": "saveType",
+                    "required": true
+                },
+                {
+                    "type": "source",
+                    "required": true
+                },
+                {
+                    "type": "isInvalidJson"
+                }
+            ]
         },
         {
             "name": "vscode_activeRegions",
@@ -699,155 +689,9 @@
                 {
                     "type": "credentialStartUrl",
                     "required": false
-                }
-            ]
-        },
-        {
-            "name": "amazonq_addMessage",
-            "description": "When a message is added to the conversation",
-            "metadata": [
-                {
-                    "type": "cwsprChatConversationId"
                 },
                 {
-                    "type": "credentialStartUrl",
-                    "required": false
-                },
-                {
-                    "type": "cwsprChatMessageId"
-                },
-                {
-                    "type": "cwsprChatTriggerInteraction"
-                },
-                {
-                    "type": "cwsprChatUserIntent",
-                    "required": false
-                },
-                {
-                    "type": "cwsprChatHasCodeSnippet",
-                    "required": false
-                },
-                {
-                    "type": "cwsprChatProgrammingLanguage",
-                    "required": false
-                },
-                {
-                    "type": "cwsprChatActiveEditorTotalCharacters",
-                    "required": false
-                },
-                {
-                    "type": "cwsprChatActiveEditorImportCount",
-                    "required": false
-                },
-                {
-                    "type": "cwsprChatResponseCodeSnippetCount",
-                    "required": false
-                },
-                {
-                    "type": "cwsprChatResponseCode"
-                },
-                {
-                    "type": "cwsprChatSourceLinkCount",
-                    "required": false
-                },
-                {
-                    "type": "cwsprChatReferencesCount",
-                    "required": false
-                },
-                {
-                    "type": "cwsprChatFollowUpCount",
-                    "required": false
-                },
-                {
-                    "type": "cwsprChatTimeToFirstChunk"
-                },
-                {
-                    "type": "cwsprChatTimeBetweenChunks"
-                },
-                {
-                    "type": "cwsprChatFullResponseLatency"
-                },
-                {
-                    "type": "cwsprChatTimeToFirstUsableChunk"
-                },
-                {
-                    "type": "cwsprChatFullServerResponseLatency"
-                },
-                {
-                    "type": "cwsprChatTimeToFirstDisplay"
-                },
-                {
-                    "type": "cwsprChatFullDisplayLatency"
-                },
-                {
-                    "type": "cwsprChatTimeBetweenDisplays"
-                },
-                {
-                    "type": "cwsprChatRequestLength"
-                },
-                {
-                    "type": "cwsprChatResponseLength",
-                    "required": false
-                },
-                {
-                    "type": "cwsprChatConversationType"
-                },
-                {
-                    "type": "cwsprChatHasProjectContext",
-                    "required": false
-                },
-                {
-                    "type": "codewhispererCustomizationArn",
-                    "required": false
-                }
-            ]
-        },
-        {
-            "name": "amazonq_messageResponseError",
-            "description": "When an error has occured in response to a prompt",
-            "metadata": [
-                {
-                    "type": "cwsprChatConversationId",
-                    "required": false
-                },
-                {
-                    "type": "credentialStartUrl",
-                    "required": false
-                },
-                {
-                    "type": "cwsprChatTriggerInteraction"
-                },
-                {
-                    "type": "cwsprChatUserIntent",
-                    "required": false
-                },
-                {
-                    "type": "cwsprChatHasCodeSnippet",
-                    "required": false
-                },
-                {
-                    "type": "cwsprChatProgrammingLanguage",
-                    "required": false
-                },
-                {
-                    "type": "cwsprChatActiveEditorTotalCharacters",
-                    "required": false
-                },
-                {
-                    "type": "cwsprChatActiveEditorImportCount",
-                    "required": false
-                },
-                {
-                    "type": "cwsprChatResponseCode"
-                },
-                {
-                    "type": "cwsprChatRequestLength"
-                },
-                {
-                    "type": "cwsprChatConversationType"
-                },
-                {
-                    "type": "cwsprChatResponseErrorReason",
+                    "type": "amazonqVectorIndexEnabled",
                     "required": false
                 }
             ]
@@ -1052,23 +896,6 @@
             ]
         },
         {
-            "name": "amazonq_createUpload",
-            "description": "Captures createUploadUrl invocation process",
-            "metadata": [
-                {
-                    "type": "amazonqConversationId"
-                },
-                {
-                    "type": "amazonqRepositorySize",
-                    "required": false
-                },
-                {
-                    "type": "credentialStartUrl",
-                    "required": false
-                }
-            ]
-        },
-        {
             "name": "ide_editCodeFile",
             "description": "User opened a code file with the given file extension. Client should DEDUPLICATE this metric (ideally hourly/daily). AWS-specific files should (also) emit `file_editAwsFile`.",
             "passive": true,
@@ -1127,6 +954,17 @@
             "passive": true
         },
         {
+            "name": "auth_signInPageOpened",
+            "description": "When the Amazon Q sign in page is opened and focused.",
+            "metadata": [
+                {
+                    "type": "source",
+                    "required": true
+                }
+            ],
+            "passive": true
+        },
+        {
             "name": "function_call",
             "description": "Represents a function call. In most cases this should wrap code with a run(), then you can add context.",
             "metadata": [
@@ -1137,19 +975,13 @@
                 {
                     "type": "className",
                     "required": false
+                },
+                {
+                    "type": "source",
+                    "required": false
                 }
             ],
             "passive": true
-        },
-        {
-            "name": "webview_load",
-            "description": "Represents a webview load event",
-            "metadata": [
-                {
-                    "type": "webviewName",
-                    "required": true
-                }
-            ]
         },
         {
             "name": "webview_error",
@@ -1199,6 +1031,17 @@
             ]
         },
         {
+            "name": "session_start",
+            "description": "Called when starting the plugin",
+            "metadata": [
+                {
+                    "type": "source",
+                    "required": false
+                }
+            ],
+            "passive": true
+        },
+        {
             "name": "session_end",
             "description": "Called when stopping the IDE on a best effort basis",
             "metadata": [
@@ -1209,6 +1052,15 @@
                 {
                     "type": "timestamp",
                     "required": false
+                }
+            ]
+        },
+        {
+            "name": "languageServer_crash",
+            "description": "Called when a language server crash is detected. TODO: Port this to common",
+            "metadata": [
+                {
+                    "type": "id"
                 }
             ]
         },
@@ -1230,6 +1082,181 @@
                 }
             ],
             "passive": true
+        },
+        {
+            "name": "docdb_listClusters",
+            "description": "Called when DocumentDB node is expanded"
+        },
+        {
+            "name": "docdb_listInstances",
+            "description": "Called when a DocumentDB cluster node is expanded"
+        },
+        {
+            "name": "docdb_createCluster",
+            "description": "Captures the result of adding a new cluster in the 'Add Cluster' workflow"
+        },
+        {
+            "name": "docdb_createInstance",
+            "description": "Captures the result of adding an instance to a cluster"
+        },
+        {
+            "name": "docdb_deleteCluster",
+            "description": "Captures the result of deleting a cluster"
+        },
+        {
+            "name": "docdb_deleteInstance",
+            "description": "Captures the result of deleting an instance"
+        },
+        {
+            "name": "docdb_renameCluster",
+            "description": "Captures the result of renaming a cluster"
+        },
+        {
+            "name": "docdb_renameInstance",
+            "description": "Captures the result of renaming an instance"
+        },
+        {
+            "name": "docdb_resizeInstance",
+            "description": "Captures the result of changing an instance class"
+        },
+        {
+            "name": "docdb_rebootInstance",
+            "description": "Captures the result of rebooting an instance"
+        },
+        {
+            "name": "docdb_stopCluster",
+            "description": "Captures the result of stopping a cluster"
+        },
+        {
+            "name": "docdb_startCluster",
+            "description": "Captures the result of starting a cluster"
+        },
+        {
+            "name": "docdb_listTags",
+            "description": "User clicked on tags command"
+        },
+        {
+            "name": "docdb_addTag",
+            "description": "User clicked on add tag command"
+        },
+        {
+            "name": "docdb_removeTag",
+            "description": "User clicked on remove tag command"
+        },
+        {
+            "name": "docdb_addRegion",
+            "description": "User clicked on add region command"
+        },
+        {
+            "name": "appbuilder_lambda2sam",
+            "description": "User click Convert a lambda function to SAM project"
+        },
+        {
+            "name": "lambda_remoteDebugStop",
+            "description": "user stop remote debugging",
+            "metadata": [
+                {
+                    "type": "sessionDuration",
+                    "required": false
+                }
+            ]
+        },
+        {
+            "name": "lambda_remoteDebugStart",
+            "description": "user start remote debugging",
+            "metadata": [
+                {
+                    "type": "runtimeString",
+                    "required": false
+                },
+                {
+                    "type": "source",
+                    "required": false
+                },
+                {
+                    "type": "action",
+                    "required": false
+                }
+            ]
+        },
+        {
+            "name": "lambda_remoteDebugPrecheck",
+            "description": "user click remote debug checkbox",
+            "metadata": [
+                {
+                    "type": "runtimeString",
+                    "required": false
+                },
+                {
+                    "type": "source",
+                    "required": false
+                },
+                {
+                    "type": "action",
+                    "required": false
+                }
+            ]
+        },
+        {
+            "name": "lambda_invokeRemote",
+            "description": "Called when invoking lambdas remotely",
+            "metadata": [
+                {
+                    "type": "result"
+                },
+                {
+                    "type": "runtime",
+                    "required": false
+                },
+                {
+                    "type": "source",
+                    "required": false
+                },
+                {
+                    "type": "runtimeString",
+                    "required": false
+                },
+                {
+                    "type": "action",
+                    "required": false
+                }
+            ]
+        },
+        {
+            "name": "languageServer_setup",
+            "description": "Sets up a language server",
+            "unit": "Milliseconds",
+            "passive": true,
+            "metadata": [
+                {
+                    "type": "id",
+                    "required": true
+                },
+                {
+                    "type": "languageServerSetupStage",
+                    "required": true
+                },
+                {
+                    "type": "languageServerLocation",
+                    "required": false
+                },
+                {
+                    "type": "languageServerVersion",
+                    "required": false
+                },
+                {
+                    "type": "manifestLocation",
+                    "required": false
+                },
+                {
+                    "type": "manifestSchemaVersion",
+                    "required": false
+                },
+                {
+                    "type": "credentialStartUrl",
+                    "required": false
+                }
+            ]
         }
     ]
 }

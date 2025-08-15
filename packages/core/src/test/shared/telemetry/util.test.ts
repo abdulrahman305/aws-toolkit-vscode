@@ -10,16 +10,24 @@ import {
     convertLegacy,
     getClientId,
     getUserAgent,
+    hadClientIdOnStartup,
     platformPair,
     SessionId,
     telemetryClientIdEnvKey,
     TelemetryConfig,
+    validateMetricEvent,
 } from '../../../shared/telemetry/util'
 import { extensionVersion } from '../../../shared/vscode/env'
 import { FakeMemento } from '../../fakeExtensionContext'
 import { GlobalState } from '../../../shared/globalState'
 import { randomUUID } from 'crypto'
 import { isUuid } from '../../../shared/crypto'
+import { MetricDatum } from '../../../shared/telemetry/clienttelemetry'
+import { assertLogsContain } from '../../globalSetup.test'
+import { getClientName } from '../../../shared/telemetry/util'
+import * as extensionUtilities from '../../../shared/extensionUtilities'
+import * as sinon from 'sinon'
+import * as vscode from 'vscode'
 
 describe('TelemetryConfig', function () {
     const settingKey = 'aws.telemetry'
@@ -83,17 +91,17 @@ describe('TelemetryConfig', function () {
     ]
 
     describe('isTelemetryEnabled', function () {
-        scenarios.forEach((scenario) => {
+        for (const scenario of scenarios) {
             it(scenario.desc, async () => {
                 await settings.update(settingKey, scenario.initialSettingValue)
 
                 assert.strictEqual(sut.isEnabled(), scenario.expectedIsEnabledValue)
             })
-        })
+        }
     })
 
     describe('sanitizeTelemetrySetting', function () {
-        scenarios.forEach((scenario) => {
+        for (const scenario of scenarios) {
             it(scenario.desc, () => {
                 const tryConvert = () => {
                     try {
@@ -105,7 +113,7 @@ describe('TelemetryConfig', function () {
 
                 assert.deepStrictEqual(tryConvert(), scenario.expectedSanitizedValue)
             })
-        })
+        }
     })
 })
 
@@ -128,20 +136,29 @@ describe('getSessionId', function () {
 
 describe('getClientId', function () {
     before(function () {
-        delete process.env[telemetryClientIdEnvKey]
+        setClientIdEnvVar(undefined)
     })
 
     afterEach(function () {
-        delete process.env[telemetryClientIdEnvKey]
+        setClientIdEnvVar(undefined)
     })
 
     function testGetClientId(globalState: GlobalState) {
         return getClientId(globalState, true, false, randomUUID())
     }
 
+    function setClientIdEnvVar(val: string | undefined) {
+        if (val === undefined) {
+            delete process.env[telemetryClientIdEnvKey]
+            return
+        }
+
+        process.env[telemetryClientIdEnvKey] = val
+    }
+
     it('generates a unique id if no other id is available', function () {
         const c1 = testGetClientId(new GlobalState(new FakeMemento()))
-        delete process.env[telemetryClientIdEnvKey]
+        setClientIdEnvVar(undefined)
         const c2 = testGetClientId(new GlobalState(new FakeMemento()))
         assert.notStrictEqual(c1, c2)
     })
@@ -160,7 +177,7 @@ describe('getClientId', function () {
 
         const e = new GlobalState(new FakeMemento())
         await e.update('telemetryClientId', randomUUID())
-        process.env[telemetryClientIdEnvKey] = expectedClientId
+        setClientIdEnvVar(expectedClientId)
 
         assert.strictEqual(testGetClientId(new GlobalState(new FakeMemento())), expectedClientId)
     })
@@ -218,6 +235,25 @@ describe('getClientId', function () {
         const clientId = getClientId(new GlobalState(new FakeMemento()), false, false)
         assert.strictEqual(clientId, '11111111-1111-1111-1111-111111111111')
     })
+
+    describe('hadClientIdOnStartup', async function () {
+        it('returns false when no existing clientId', async function () {
+            const globalState = new GlobalState(new FakeMemento())
+            assert.strictEqual(hadClientIdOnStartup(globalState, testGetClientId), false)
+        })
+
+        it('returns true when existing env var clientId', async function () {
+            const globalState = new GlobalState(new FakeMemento())
+            setClientIdEnvVar('aaa-111')
+            assert.strictEqual(hadClientIdOnStartup(globalState, testGetClientId), true)
+        })
+
+        it('returns true when existing state clientId', async function () {
+            const globalState = new GlobalState(new FakeMemento())
+            await globalState.update('telemetryClientId', 'bbb-222')
+            assert.strictEqual(hadClientIdOnStartup(globalState, testGetClientId), true)
+        })
+    })
 })
 
 describe('getUserAgent', function () {
@@ -250,5 +286,179 @@ describe('getUserAgent', function () {
         const clientPairIndex = pairs.findIndex((pair) => pair.startsWith('ClientId/'))
         const beforeClient = pairs[clientPairIndex - 1]
         assert.strictEqual(beforeClient, platformPair())
+    })
+})
+
+describe('validateMetricEvent', function () {
+    it('does not validate exempt metrics', function () {
+        const metricEvent: MetricDatum = {
+            MetricName: 'exempt_metric',
+            Value: 1,
+            Unit: 'None',
+            Metadata: [{ Key: 'result', Value: 'Succeeded' }],
+        } as MetricDatum
+
+        validateMetricEvent(metricEvent, true, (_) => true)
+        assert.throws(() => assertLogsContain('invalid Metric', false, 'warn'))
+    })
+
+    it('passes validation for metrics with proper result property', function () {
+        const metricEvent: MetricDatum = {
+            MetricName: 'valid_metric',
+            Value: 1,
+            Unit: 'None',
+            Metadata: [{ Key: 'result', Value: 'Succeeded' }],
+        } as MetricDatum
+
+        validateMetricEvent(metricEvent, true, (_) => false)
+        assert.throws(() => assertLogsContain('invalid Metric', false, 'warn'))
+    })
+
+    it('passes validation for metrics with Failed result and reason property', function () {
+        const metricEvent: MetricDatum = {
+            MetricName: 'valid_failed_metric',
+            Value: 1,
+            Unit: 'None',
+            Metadata: [
+                { Key: 'result', Value: 'Failed' },
+                { Key: 'reason', Value: 'Something went wrong' },
+            ],
+        } as MetricDatum
+
+        validateMetricEvent(metricEvent, true, (_) => false)
+    })
+
+    it('fails validation for metrics missing result property when fatal=true', function () {
+        const metricEvent: MetricDatum = {
+            MetricName: 'invalid_metric_no_result',
+            Value: 1,
+            Unit: 'None',
+            Metadata: [{ Key: 'someOtherProperty', Value: 'value' }],
+        } as MetricDatum
+
+        assert.throws(
+            () => validateMetricEvent(metricEvent, true, (_) => false),
+            /emitted without the `result` property/
+        )
+    })
+
+    it('logs warning for metrics missing result property when fatal=false', function () {
+        const metricEvent: MetricDatum = {
+            MetricName: 'invalid_metric_no_result',
+            Value: 1,
+            Unit: 'None',
+            Metadata: [{ Key: 'someOtherProperty', Value: 'value' }],
+        } as MetricDatum
+
+        validateMetricEvent(metricEvent, false, (_) => false)
+        assertLogsContain('invalid Metric', false, 'warn')
+    })
+
+    it('fails validation for metrics with Failed result but missing reason property when fatal=true', function () {
+        const metricEvent: MetricDatum = {
+            MetricName: 'invalid_metric_failed_no_reason',
+            Value: 1,
+            Unit: 'None',
+            Metadata: [{ Key: 'result', Value: 'Failed' }],
+        } as MetricDatum
+
+        assert.throws(
+            () => validateMetricEvent(metricEvent, true),
+            /emitted with result=Failed but without the `reason` property/
+        )
+    })
+
+    it('logs warning for metrics with Failed result but missing reason property when fatal=false', function () {
+        const metricEvent: MetricDatum = {
+            MetricName: 'invalid_metric_failed_no_reason',
+            Value: 1,
+            Unit: 'None',
+            Metadata: [{ Key: 'result', Value: 'Failed' }],
+        } as MetricDatum
+
+        validateMetricEvent(metricEvent, false)
+        assertLogsContain('invalid Metric', false, 'warn')
+    })
+
+    it('does not fail validation for metrics with missing fields with fatal=true', function () {
+        const metricEvent: MetricDatum = {
+            MetricName: 'invalid_metric_missing_fields',
+            Value: 1,
+            Unit: 'None',
+            Metadata: [
+                { Key: 'result', Value: 'Succeeded' },
+                { Key: 'missingFields', Value: 'field1,field2' },
+            ],
+        } as MetricDatum
+
+        validateMetricEvent(metricEvent, false)
+        assertLogsContain('invalid Metric', false, 'warn')
+    })
+})
+
+describe('getClientName', function () {
+    let sandbox: sinon.SinonSandbox
+    let isSageMakerStub: sinon.SinonStub
+
+    beforeEach(function () {
+        sandbox = sinon.createSandbox()
+        isSageMakerStub = sandbox.stub(extensionUtilities, 'isSageMaker')
+    })
+
+    afterEach(function () {
+        sandbox.restore()
+    })
+
+    it('returns "AmazonQ-For-SMUS-CE" when in SMUS environment', function () {
+        isSageMakerStub.withArgs('SMUS').returns(true)
+        sandbox.stub(vscode.env, 'appName').value('SageMaker Code Editor')
+
+        const result = getClientName()
+
+        assert.strictEqual(result, 'AmazonQ-For-SMUS-CE')
+        assert.ok(isSageMakerStub.calledOnceWith('SMUS'))
+    })
+
+    it('returns "AmazonQ-For-SMAI-CE" when in SMAI environment', function () {
+        isSageMakerStub.withArgs('SMUS').returns(false)
+        isSageMakerStub.withArgs('SMAI').returns(true)
+        sandbox.stub(vscode.env, 'appName').value('SageMaker Code Editor')
+
+        const result = getClientName()
+
+        assert.strictEqual(result, 'AmazonQ-For-SMAI-CE')
+        assert.ok(isSageMakerStub.calledWith('SMUS'))
+        assert.ok(isSageMakerStub.calledWith('SMAI'))
+    })
+
+    it('returns vscode app name when not in SMUS environment', function () {
+        const mockAppName = 'Visual Studio Code'
+        isSageMakerStub.withArgs('SMUS').returns(false)
+        isSageMakerStub.withArgs('SMAI').returns(false)
+        sandbox.stub(vscode.env, 'appName').value(mockAppName)
+
+        const result = getClientName()
+
+        assert.strictEqual(result, mockAppName)
+        assert.ok(isSageMakerStub.calledWith('SMUS'))
+        assert.ok(isSageMakerStub.calledWith('SMAI'))
+    })
+
+    it('handles undefined app name gracefully', function () {
+        isSageMakerStub.withArgs('SMUS').returns(false)
+        sandbox.stub(vscode.env, 'appName').value(undefined)
+
+        const result = getClientName()
+
+        assert.strictEqual(result, undefined)
+    })
+
+    it('prioritizes SMUS detection over app name', function () {
+        isSageMakerStub.withArgs('SMUS').returns(true)
+        sandbox.stub(vscode.env, 'appName').value('SageMaker Code Editor')
+
+        const result = getClientName()
+
+        assert.strictEqual(result, 'AmazonQ-For-SMUS-CE')
     })
 })

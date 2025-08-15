@@ -18,15 +18,26 @@ export const amazonqSettings = {
         "amazonQWelcomePage": {},
         "amazonQSessionConfigurationMessage": {},
         "minIdeVersion": {},
-        "ssoCacheError": {}
+        "ssoCacheError": {},
+        "amazonQLspManifestMessage": {},
+        "amazonQWorkspaceLspManifestMessage": {},
+        "amazonQChatDisclaimer": {},
+        "amazonQChatPairProgramming": {},
+        "amazonQSelectDeveloperProfile": {}
     },
-    "amazonQ.showInlineCodeSuggestionsWithCodeReferences": {},
+    "amazonQ.showCodeWithReferences": {},
+    "amazonQ.allowFeatureDevelopmentToRunCodeAndTests": {},
     "amazonQ.importRecommendationForInlineCodeSuggestions": {},
     "amazonQ.shareContentWithAWS": {},
     "amazonQ.workspaceIndex": {},
     "amazonQ.workspaceIndexWorkerThreads": {},
     "amazonQ.workspaceIndexUseGPU": {},
-    "amazonQ.workspaceIndexMaxSize": {}
+    "amazonQ.workspaceIndexMaxSize": {},
+    "amazonQ.workspaceIndexMaxFileSize": {},
+    "amazonQ.workspaceIndexCacheDirPath": {},
+    "amazonQ.workspaceIndexIgnoreFilePatterns": {},
+    "amazonQ.ignoredSecurityIssues": {},
+    "amazonQ.proxy.certificateAuthority": {}
 }
 
 export default amazonqSettings

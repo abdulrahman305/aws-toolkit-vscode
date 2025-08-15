@@ -8,25 +8,72 @@ import * as path from 'path'
 import * as os from 'os'
 import xml2js = require('xml2js')
 import * as CodeWhispererConstants from '../../models/constants'
-import { existsSync, writeFileSync } from 'fs' // eslint-disable-line no-restricted-imports
-import { BuildSystem, FolderInfo, transformByQState } from '../../models/model'
-import { IManifestFile } from '../../../amazonqFeatureDev/models'
+import { existsSync, readFileSync, writeFileSync } from 'fs' // eslint-disable-line no-restricted-imports
+import { BuildSystem, DB, FolderInfo, transformByQState } from '../../models/model'
 import fs from '../../../shared/fs/fs'
 import globals from '../../../shared/extensionGlobals'
+import { ChatSessionManager } from '../../../amazonqGumby/chat/storages/chatSession'
+import { AbsolutePathDetectedError } from '../../../amazonqGumby/errors'
+import { getLogger } from '../../../shared/logger/logger'
+import AdmZip from 'adm-zip'
+import { IManifestFile } from './humanInTheLoopManager'
+import { ExportResultArchiveStructure } from '../../../shared/utilities/download'
+import { isFileNotFoundError } from '../../../shared/errors'
 
-export function getDependenciesFolderInfo(): FolderInfo {
+export async function getDependenciesFolderInfo(): Promise<FolderInfo> {
     const dependencyFolderName = `${CodeWhispererConstants.dependencyFolderName}${globals.clock.Date.now()}`
     const dependencyFolderPath = path.join(os.tmpdir(), dependencyFolderName)
+    await fs.mkdir(dependencyFolderPath)
     return {
         name: dependencyFolderName,
         path: dependencyFolderPath,
     }
 }
 
-export async function writeLogs() {
+export async function writeAndShowBuildLogs(isLocalInstall: boolean = false) {
     const logFilePath = path.join(os.tmpdir(), 'build-logs.txt')
-    writeFileSync(logFilePath, transformByQState.getErrorLog())
-    return logFilePath
+    writeFileSync(logFilePath, transformByQState.getBuildLog())
+    const doc = await vscode.workspace.openTextDocument(logFilePath)
+    const logs = transformByQState.getBuildLog().toLowerCase()
+    if (logs.includes('intermediate build result') || logs.includes('maven jar failed')) {
+        // only show the log if the build failed; show it in second column for intermediate builds only
+        const options = isLocalInstall ? undefined : { viewColumn: vscode.ViewColumn.Two }
+        await vscode.window.showTextDocument(doc, options)
+    }
+}
+
+export async function createLocalBuildUploadZip(baseDir: string, exitCode: number | null, stdout: string) {
+    const manifestFilePath = path.join(baseDir, 'manifest.json')
+    const buildResultsManifest = {
+        capability: 'CLIENT_SIDE_BUILD',
+        exitCode: exitCode,
+        commandLogFileName: 'build-output.log',
+    }
+    const formattedManifest = JSON.stringify(buildResultsManifest)
+    await fs.writeFile(manifestFilePath, formattedManifest)
+
+    const buildLogsFilePath = path.join(baseDir, 'build-output.log')
+    await fs.writeFile(buildLogsFilePath, stdout)
+
+    const zip = new AdmZip()
+    zip.addLocalFile(buildLogsFilePath)
+    zip.addLocalFile(manifestFilePath)
+
+    const zipPath = `${baseDir}.zip`
+    zip.writeZip(zipPath)
+    getLogger().info(`CodeTransformation: created local build upload zip at ${zipPath}`)
+    return zipPath
+}
+
+// extract the 'sources' directory of the upload ZIP so that we can apply the diff.patch to a copy of the source code
+export async function extractOriginalProjectSources(destinationPath: string) {
+    const zip = new AdmZip(transformByQState.getPayloadFilePath())
+    const zipEntries = zip.getEntries()
+    for (const zipEntry of zipEntries) {
+        if (zipEntry.entryName.startsWith('sources')) {
+            zip.extractEntryTo(zipEntry, destinationPath, true, true)
+        }
+    }
 }
 
 export async function checkBuildSystem(projectPath: string) {
@@ -35,6 +82,107 @@ export async function checkBuildSystem(projectPath: string) {
         return BuildSystem.Maven
     }
     return BuildSystem.Unknown
+}
+
+export async function parseBuildFile() {
+    try {
+        const absolutePaths = ['users/', 'system/', 'volumes/', 'c:\\', 'd:\\']
+        const alias = path.basename(os.homedir())
+        absolutePaths.push(alias)
+        const buildFilePath = path.join(transformByQState.getProjectPath(), 'pom.xml')
+        if (existsSync(buildFilePath)) {
+            const buildFileContents = readFileSync(buildFilePath).toString().toLowerCase()
+            const detectedPaths = []
+            for (const absolutePath of absolutePaths) {
+                if (buildFileContents.includes(absolutePath)) {
+                    detectedPaths.push(absolutePath)
+                }
+            }
+            if (detectedPaths.length > 0) {
+                const warningMessage = CodeWhispererConstants.absolutePathDetectedMessage(
+                    detectedPaths.length,
+                    path.basename(buildFilePath),
+                    detectedPaths.join(', ')
+                )
+                transformByQState.getChatControllers()?.errorThrown.fire({
+                    error: new AbsolutePathDetectedError(warningMessage),
+                    tabID: ChatSessionManager.Instance.getSession().tabID,
+                })
+                getLogger().info('CodeTransformation: absolute path potentially in build file')
+                return warningMessage
+            }
+        }
+    } catch (err: any) {
+        // swallow error
+        getLogger().error(`CodeTransformation: error scanning for absolute paths, tranformation continuing: ${err}`)
+    }
+    return undefined
+}
+
+// return the first missing key in the custom versions file, or undefined if all required keys are present
+export async function validateCustomVersionsFile(fileContents: string) {
+    const requiredKeys = ['dependencyManagement', 'identifier', 'targetVersion', 'originType']
+    for (const key of requiredKeys) {
+        if (!fileContents.includes(key)) {
+            getLogger().info(`CodeTransformation: .YAML file is missing required key: ${key}`)
+            return key
+        }
+    }
+    return undefined
+}
+
+export async function validateSQLMetadataFile(fileContents: string, message: any) {
+    try {
+        const sctData = await xml2js.parseStringPromise(fileContents)
+        const dbEntities = sctData['tree']['instances'][0]['ProjectModel'][0]['entities'][0]
+        const sourceDB = dbEntities['sources'][0]['DbServer'][0]['$']['vendor'].trim().toUpperCase()
+        const targetDB = dbEntities['targets'][0]['DbServer'][0]['$']['vendor'].trim().toUpperCase()
+        const sourceServerName = dbEntities['sources'][0]['DbServer'][0]['$']['name'].trim()
+        transformByQState.setSourceServerName(sourceServerName)
+        if (sourceDB !== DB.ORACLE) {
+            transformByQState.getChatMessenger()?.sendUnrecoverableErrorResponse('unsupported-source-db', message.tabID)
+            return false
+        } else if (targetDB !== DB.AURORA_POSTGRESQL && targetDB !== DB.RDS_POSTGRESQL) {
+            transformByQState.getChatMessenger()?.sendUnrecoverableErrorResponse('unsupported-target-db', message.tabID)
+            return false
+        }
+        transformByQState.setSourceDB(sourceDB)
+        transformByQState.setTargetDB(targetDB)
+
+        const serverNodeLocations =
+            sctData['tree']['instances'][0]['ProjectModel'][0]['relations'][0]['server-node-location']
+        const schemaNames = new Set<string>()
+        // eslint-disable-next-line unicorn/no-array-for-each
+        serverNodeLocations.forEach((serverNodeLocation: any) => {
+            const schemaNodes = serverNodeLocation['FullNameNodeInfoList'][0]['nameParts'][0][
+                'FullNameNodeInfo'
+            ].filter((node: any) => node['$']['typeNode'].toLowerCase() === 'schema')
+            // eslint-disable-next-line unicorn/no-array-for-each
+            schemaNodes.forEach((node: any) => {
+                schemaNames.add(node['$']['nameNode'].toUpperCase())
+            })
+        })
+        transformByQState.setSchemaOptions(schemaNames) // user will choose one of these
+        getLogger().info(
+            `CodeTransformation: Parsed .sct file with source DB: ${sourceDB}, target DB: ${targetDB}, source host name: ${sourceServerName}, and schema names: ${Array.from(schemaNames)}`
+        )
+    } catch (err: any) {
+        getLogger().error('CodeTransformation: Error parsing .sct file. %O', err)
+        transformByQState.getChatMessenger()?.sendUnrecoverableErrorResponse('error-parsing-sct-file', message.tabID)
+        return false
+    }
+    return true
+}
+
+export function setMaven() {
+    // avoid using maven wrapper since we can run into permissions issues
+    transformByQState.setMavenName('mvn')
+}
+
+export async function openBuildLogFile() {
+    const logFilePath = transformByQState.getPreBuildLogFilePath()
+    const doc = await vscode.workspace.openTextDocument(logFilePath)
+    await vscode.window.showTextDocument(doc)
 }
 
 export async function createPomCopy(
@@ -66,7 +214,6 @@ export async function getJsonValuesFromManifestFile(
     return {
         hilCapability: jsonValues?.hilType,
         pomFolderName: jsonValues?.pomFolderName,
-        // TODO remove this forced version
         sourcePomVersion: jsonValues?.sourcePomVersion || '1.0',
         pomArtifactId: jsonValues?.pomArtifactId,
         pomGroupId: jsonValues?.pomGroupId,
@@ -202,4 +349,41 @@ export async function parseVersionsListFromPomFile(xmlString: string): Promise<I
     const status = report.status?.[0]
 
     return { latestVersion, majorVersions, minorVersions, status }
+}
+
+/**
+ * Saves a copy of the diff patch, summary, and build logs (if any) locally
+ *
+ * @param pathToArchiveDir path to the archive directory where the artifacts are unzipped
+ * @param pathToDestinationDir destination directory (will create directories if path doesn't exist already)
+ */
+export async function copyArtifacts(pathToArchiveDir: string, pathToDestinationDir: string) {
+    // create destination path if doesn't exist already
+    // mkdir() will not raise an error if path exists
+    await fs.mkdir(pathToDestinationDir)
+
+    const diffPath = path.join(pathToArchiveDir, ExportResultArchiveStructure.PathToDiffPatch)
+    const summaryPath = path.join(pathToArchiveDir, ExportResultArchiveStructure.PathToSummary)
+
+    try {
+        await fs.copy(diffPath, path.join(pathToDestinationDir, 'diff.patch'))
+        // make summary directory if needed
+        await fs.mkdir(path.join(pathToDestinationDir, 'summary'))
+        await fs.copy(summaryPath, path.join(pathToDestinationDir, 'summary', 'summary.md'))
+    } catch (error) {
+        getLogger().error('Code Transformation: Error saving local copy of artifacts: %s', (error as Error).message)
+    }
+
+    const buildLogsPath = path.join(path.dirname(summaryPath), 'buildCommandOutput.log')
+    try {
+        await fs.copy(buildLogsPath, path.join(pathToDestinationDir, 'summary', 'buildCommandOutput.log'))
+    } catch (error) {
+        // build logs won't exist for SQL conversions (not an error)
+        if (!isFileNotFoundError(error)) {
+            getLogger().error(
+                'Code Transformation: Error saving local copy of build logs: %s',
+                (error as Error).message
+            )
+        }
+    }
 }

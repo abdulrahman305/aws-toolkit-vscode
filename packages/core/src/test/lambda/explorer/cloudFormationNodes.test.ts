@@ -4,7 +4,6 @@
  */
 
 import assert from 'assert'
-import { CloudFormation } from 'aws-sdk'
 import * as os from 'os'
 import {
     CloudFormationNode,
@@ -12,7 +11,7 @@ import {
     contextValueCloudformationLambdaFunction,
 } from '../../../lambda/explorer/cloudFormationNodes'
 import { LambdaFunctionNode } from '../../../lambda/explorer/lambdaFunctionNode'
-import { DefaultCloudFormationClient } from '../../../shared/clients/cloudFormationClient'
+import { CloudFormationClient, StackResource, StackSummary } from '../../../shared/clients/cloudFormation'
 import { DefaultLambdaClient } from '../../../shared/clients/lambdaClient'
 import globals from '../../../shared/extensionGlobals'
 import { TestAWSTreeNode } from '../../shared/treeview/nodes/testAWSTreeNode'
@@ -27,14 +26,14 @@ import { getLabel } from '../../../shared/treeview/utils'
 const regionCode = 'someregioncode'
 
 function createLambdaClient(...functionNames: string[]) {
-    const client = stub(DefaultLambdaClient, { regionCode })
+    const client = stub(DefaultLambdaClient, { regionCode, userAgent: undefined })
     client.listFunctions.returns(asyncGenerator(functionNames.map((name) => ({ FunctionName: name }))))
 
     return client
 }
 
 function createCloudFormationClient(...stackNames: string[]) {
-    const client = stub(DefaultCloudFormationClient, { regionCode })
+    const client = stub(CloudFormationClient, { regionCode })
     client.describeStackResources.resolves({ StackResources: [] })
     client.listStacks.returns(
         asyncGenerator(
@@ -44,6 +43,9 @@ function createCloudFormationClient(...stackNames: string[]) {
                     StackName: name,
                     CreationTime: new globals.clock.Date(),
                     StackStatus: 'CREATE_COMPLETE',
+                    DriftInformation: {
+                        StackDriftStatus: 'UNKNOWN',
+                    },
                 }
             })
         )
@@ -53,12 +55,15 @@ function createCloudFormationClient(...stackNames: string[]) {
 }
 
 describe('CloudFormationStackNode', function () {
-    function createStackSummary() {
+    function createStackSummary(): StackSummary {
         return {
             CreationTime: new globals.clock.Date(),
             StackId: '1',
             StackName: 'myStack',
             StackStatus: 'UPDATE_COMPLETE',
+            DriftInformation: {
+                StackDriftStatus: 'UNKNOWN',
+            },
         }
     }
 
@@ -72,11 +77,11 @@ describe('CloudFormationStackNode', function () {
         return new CloudFormationStackNode(parentNode, regionCode, summary, lambdaClient, cloudFormationClient)
     }
 
-    function generateStackResources(...functionNames: string[]): CloudFormation.StackResource[] {
+    function generateStackResources(...functionNames: string[]): StackResource[] {
         return functionNames.map((name) => ({
             PhysicalResourceId: name,
             LogicalResourceId: name,
-            ResourceStatus: 'CREATED',
+            ResourceStatus: 'CREATE_COMPLETE',
             ResourceType: 'Lambda::Function',
             Timestamp: new globals.clock.Date(),
         }))
@@ -107,9 +112,9 @@ describe('CloudFormationStackNode', function () {
 
         assert.strictEqual(childNodes.length, 2, 'Unexpected child count')
 
-        childNodes.forEach((node) =>
+        for (const node of childNodes) {
             assert.ok(node instanceof LambdaFunctionNode, 'Expected child node to be LambdaFunctionNode')
-        )
+        }
     })
 
     it('has child nodes with CloudFormation contextValue', async function () {
@@ -121,13 +126,13 @@ describe('CloudFormationStackNode', function () {
         const node = generateTestNode({ lambdaClient, cloudFormationClient })
         const childNodes = await node.getChildren()
 
-        childNodes.forEach((node) =>
+        for (const node of childNodes) {
             assert.strictEqual(
                 node.contextValue,
                 contextValueCloudformationLambdaFunction,
                 'expected the node to have a CloudFormation contextValue'
             )
-        )
+        }
     })
 
     it('only includes functions which are in a CloudFormation stack', async function () {
@@ -163,9 +168,9 @@ describe('CloudFormationNode', function () {
         const cloudFormationNode = new CloudFormationNode(regionCode, client)
         const children = await cloudFormationNode.getChildren()
 
-        children.forEach((node) =>
+        for (const node of children) {
             assert.ok(node instanceof CloudFormationStackNode, 'Expected child node to be CloudFormationStackNode')
-        )
+        }
     })
 
     it('has sorted child nodes', async function () {
