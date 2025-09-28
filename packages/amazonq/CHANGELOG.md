@@ -1,3 +1,25 @@
+## 1.96.0 2025-09-25
+
+- **Bug Fix** Amazon Q support web/container environments running Ubuntu/Linux, even when the host machine is Amazon Linux 2.
+
+## 1.95.0 2025-09-19
+
+- **Bug Fix** Amazon Q automatically refreshes expired IAM Credentials in Sagemaker instances
+
+## 1.94.0 2025-09-11
+
+- Miscellaneous non-user-facing changes
+
+## 1.93.0 2025-09-05
+
+- Miscellaneous non-user-facing changes
+
+## 1.92.0 2025-08-28
+
+- **Feature** Amazon Q supports admin control for MCP servers to restrict MCP server usage
+- **Feature** Enabling dynamic model fetching capabilities in Amazon Q chat
+- **Feature** Amazon Q: Support for configuring and utilizing remote MCP servers.
+
 ## 1.91.0 2025-08-22
 
 - **Bug Fix** Enable inline completion in Jupyter Notebook
