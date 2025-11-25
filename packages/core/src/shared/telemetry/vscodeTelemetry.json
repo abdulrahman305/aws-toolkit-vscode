@@ -1,6 +1,20 @@
 {
     "types": [
         {
+            "name": "toolId",
+            "type": "string",
+            "description": "The tool being installed",
+            "allowedValues": [
+                "session-manager-plugin",
+                "dotnet-lambda-deploy",
+                "dotnet-deploy-cli",
+                "aws-cli",
+                "sam-cli",
+                "docker",
+                "finch"
+            ]
+        },
+        {
             "name": "amazonQProfileRegion",
             "type": "string",
             "description": "Region of the Q Profile associated with a metric\n- \"n/a\" if metric is not associated with a profile or region.\n- \"not-set\" if metric is associated with a profile, but profile is unknown."
@@ -305,6 +319,12 @@
             "name": "smusProjectAccountId",
             "type": "string",
             "description": "SMUS project account id"
+        },
+        {
+            "name": "smusAuthMode",
+            "type": "string",
+            "allowedValues": ["sso", "iam"],
+            "description": "SMUS authentication mode (SSO or IAM)"
         }
     ],
     "metrics": [
@@ -338,6 +358,33 @@
         {
             "name": "sagemaker_deeplinkConnect",
             "description": "Connect to SageMake Space via a deeplink",
+            "metadata": [
+                {
+                    "type": "result"
+                }
+            ]
+        },
+        {
+            "name": "hyperpod_openRemoteConnection",
+            "description": "Perform a connection to a Hyperpod Space",
+            "metadata": [
+                {
+                    "type": "result"
+                }
+            ]
+        },
+        {
+            "name": "hyperpod_stopSpace",
+            "description": "Stop a HyperPod Space",
+            "metadata": [
+                {
+                    "type": "result"
+                }
+            ]
+        },
+        {
+            "name": "hyperpod_filterSpaces",
+            "description": "Filter HyperPod Spaces",
             "metadata": [
                 {
                     "type": "result"
@@ -1373,6 +1420,10 @@
                 {
                     "type": "smusDomainAccountId",
                     "required": false
+                },
+                {
+                    "type": "smusAuthMode",
+                    "required": false
                 }
             ]
         },
@@ -1386,6 +1437,10 @@
                 },
                 {
                     "type": "smusDomainAccountId",
+                    "required": false
+                },
+                {
+                    "type": "smusAuthMode",
                     "required": false
                 }
             ]
@@ -1408,6 +1463,10 @@
                 },
                 {
                     "type": "smusDomainRegion",
+                    "required": false
+                },
+                {
+                    "type": "smusAuthMode",
                     "required": false
                 }
             ]
@@ -1434,6 +1493,10 @@
                 },
                 {
                     "type": "smusDomainRegion",
+                    "required": false
+                },
+                {
+                    "type": "smusAuthMode",
                     "required": false
                 }
             ],
@@ -1470,6 +1533,10 @@
                 {
                     "type": "smusProjectAccountId",
                     "required": false
+                },
+                {
+                    "type": "smusAuthMode",
+                    "required": false
                 }
             ]
         },
@@ -1503,6 +1570,10 @@
                 },
                 {
                     "type": "smusProjectAccountId",
+                    "required": false
+                },
+                {
+                    "type": "smusAuthMode",
                     "required": false
                 }
             ]
@@ -1542,6 +1613,10 @@
                 {
                     "type": "smusConnectionType",
                     "required": false
+                },
+                {
+                    "type": "smusAuthMode",
+                    "required": false
                 }
             ]
         },
@@ -1580,6 +1655,10 @@
                 {
                     "type": "smusConnectionType",
                     "required": false
+                },
+                {
+                    "type": "smusAuthMode",
+                    "required": false
                 }
             ]
         },
@@ -1617,6 +1696,55 @@
                 },
                 {
                     "type": "smusConnectionType",
+                    "required": false
+                },
+                {
+                    "type": "smusAuthMode",
+                    "required": false
+                }
+            ]
+        },
+        {
+            "name": "smus_deeplinkConnect",
+            "description": "Emitted when a user connects to a SMUS space via deeplink",
+            "metadata": [
+                {
+                    "type": "result"
+                },
+                {
+                    "type": "reason",
+                    "required": false
+                },
+                {
+                    "type": "smusDomainId",
+                    "required": false
+                },
+                {
+                    "type": "smusDomainAccountId",
+                    "required": false
+                },
+                {
+                    "type": "smusProjectId",
+                    "required": false
+                },
+                {
+                    "type": "smusDomainRegion",
+                    "required": false
+                },
+                {
+                    "type": "smusProjectRegion",
+                    "required": false
+                },
+                {
+                    "type": "smusProjectAccountId",
+                    "required": false
+                },
+                {
+                    "type": "smusSpaceKey",
+                    "required": false
+                },
+                {
+                    "type": "smusAuthMode",
                     "required": false
                 }
             ]
